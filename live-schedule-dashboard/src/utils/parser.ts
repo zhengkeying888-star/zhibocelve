@@ -559,6 +559,30 @@ export function parseScheduleWorkbook(buffer: ArrayBuffer, fileName?: string): {
     audienceSegments = parseAudienceJson(audienceSheets[0].json)
   }
 
+  // Fallback: derive audience segments from schedule's own audience assignment rows
+  // (for completed schedule files that don't have a separate audience sheet)
+  if (audienceSegments.length === 0 && lives.length > 0) {
+    const segmentMap = new Map<string, AudienceSegment>()
+    for (const live of lives) {
+      for (const aud of live.assignedAudiences) {
+        const key = `${aud.line}-${normalizeCategory(aud.category)}-${aud.timeRange}`
+        if (!segmentMap.has(key)) {
+          segmentMap.set(key, {
+            id: generateId(),
+            line: aud.line,
+            category: normalizeCategory(aud.category),
+            timeRange: aud.timeRange,
+            count: aud.count,
+            status: 'available',
+          })
+        } else {
+          segmentMap.get(key)!.count += aud.count
+        }
+      }
+    }
+    audienceSegments = Array.from(segmentMap.values())
+  }
+
   // Parse history from other schedule sheets
   const historyRecords: HistoryRecord[] = []
   for (const sheetName of workbook.SheetNames) {
@@ -762,7 +786,7 @@ function parseAudienceAssignmentRow(row: any[], weekDays: WeekDay[], currentSlot
       if (match && currentTimeRange) {
         const category = normalizeCategory(match[1].trim())
         const count = parseInt(match[2], 10)
-        const targetLive = dayLives.find(l => parseLine(l.name) === lineKey) || dayLives[0]
+        const targetLive = dayLives.find(l => parseLine(l.name) === lineKey)
         if (targetLive) {
           targetLive.assignedAudiences.push({
             segmentId: generateId(),
@@ -817,16 +841,21 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
     }
   }
 
+  let currentLine: LineType = 'health'
+
   for (let r = headerRowIdx + 1; r < json.length; r++) {
     const row = json[r]
     if (!row || row.length < 3) continue
 
     const lineStr = normCell(row[0])
+    if (lineStr) {
+      currentLine = parseLine(lineStr)
+    }
     const rawCategory = normCell(row[1])
     if (!rawCategory) continue
 
     const category = normalizeCategory(rawCategory)
-    const lineType = parseLine(lineStr)
+    const lineType = currentLine
 
     for (let g = 0; g < timeIndices.length; g++) {
       const ti = timeIndices[g]
