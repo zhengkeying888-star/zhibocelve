@@ -461,17 +461,17 @@ export const useScheduleStore = defineStore('schedule', () => {
       const liveCat = normalizeCategory(live.category)
       const candidates = audienceSegments.value
         .filter((s) => s.status === 'available' && s.line === live.line)
-        .filter((s) => {
-          if (live.isCrossCategory && isSameCategoryFamily(liveCat, normalizeCategory(s.category))) {
-            return false
-          }
-          return true
-        })
+        // 同品类互斥：任何直播都不能宣发同品类的 audience
+        .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
         .sort((a, b) => {
-          // Prefer same category family (垂类)
-          const aSame = isSameCategoryFamily(liveCat, normalizeCategory(a.category)) ? 1000 : 0
-          const bSame = isSameCategoryFamily(liveCat, normalizeCategory(b.category)) ? 1000 : 0
-          if (bSame !== aSame) return bSame - aSame
+          // Prefer higher crossRate (跨科率)
+          const aRate = crossCategoryPrefs.value.find(
+            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(a.category)
+          )?.crossRate || 0
+          const bRate = crossCategoryPrefs.value.find(
+            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(b.category)
+          )?.crossRate || 0
+          if (bRate !== aRate) return bRate - aRate
           // Then prefer higher LTV
           const aLTV = crossCategoryPrefs.value.find(
             (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(a.category)
