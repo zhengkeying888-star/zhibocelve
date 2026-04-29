@@ -105,10 +105,11 @@ async function handleSubmit() {
 
   overallStatus.value = 'done'
 
-  // Auto schedule only if we have audience data and no existing assignments
-  const hasAssignments = store.liveStreams.some((l) => l.assignedAudiences.length > 0)
+  // Always re-run autoSchedule when audience data is available.
+  // Completed schedule files may contain cross-line audience assignments
+  // that violate the垂类 rule; we reset and regenerate from scratch.
   const hasAudience = store.audienceSegments.length > 0
-  if (!hasAssignments && hasAudience) {
+  if (hasAudience) {
     store.autoSchedule()
   }
 

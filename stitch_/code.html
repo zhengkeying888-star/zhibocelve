@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>直播排期策略看板</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=Noto+Sans+SC:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "error": "#ba1a1a",
+                        "outline-variant": "#c3c6d7",
+                        "surface-container-low": "#eff4ff",
+                        "on-surface": "#0b1c30",
+                        "outline": "#737686",
+                        "on-primary-container": "#eeefff",
+                        "on-secondary-fixed-variant": "#005137",
+                        "on-tertiary-fixed": "#360f00",
+                        "secondary-fixed-dim": "#68dba9",
+                        "error-container": "#ffdad6",
+                        "surface-tint": "#0053db",
+                        "tertiary-container": "#bc4800",
+                        "secondary-fixed": "#85f8c4",
+                        "on-primary": "#ffffff",
+                        "primary": "#004ac6",
+                        "on-background": "#0b1c30",
+                        "secondary": "#006c4a",
+                        "surface-container-highest": "#d3e4fe",
+                        "inverse-primary": "#b4c5ff",
+                        "tertiary": "#943700",
+                        "surface": "#f8f9ff",
+                        "surface-container": "#e5eeff",
+                        "on-surface-variant": "#434655",
+                        "tertiary-fixed-dim": "#ffb596",
+                        "primary-fixed": "#dbe1ff",
+                        "on-secondary-container": "#00714e",
+                        "on-error": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "primary-container": "#2563eb",
+                        "on-primary-fixed": "#00174b",
+                        "on-secondary-fixed": "#002114",
+                        "on-tertiary": "#ffffff",
+                        "inverse-surface": "#213145",
+                        "primary-fixed-dim": "#b4c5ff",
+                        "on-error-container": "#93000a",
+                        "tertiary-fixed": "#ffdbcd",
+                        "secondary-container": "#82f5c1",
+                        "surface-container-high": "#dce9ff",
+                        "surface-dim": "#cbdbf5",
+                        "on-tertiary-container": "#ffede6",
+                        "background": "#f8f9ff",
+                        "surface-variant": "#d3e4fe",
+                        "surface-bright": "#f8f9ff",
+                        "on-primary-fixed-variant": "#003ea8",
+                        "on-tertiary-fixed-variant": "#7d2d00",
+                        "surface-container-lowest": "#ffffff",
+                        "inverse-on-surface": "#eaf1ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "spacing": {
+                        "component-gap-tight": "4px",
+                        "gutter": "16px",
+                        "section-margin": "32px",
+                        "container-padding": "24px",
+                        "component-gap-base": "8px",
+                        "unit": "4px"
+                    },
+                    "fontFamily": {
+                        "body-sm": ["Inter", "Noto Sans SC"],
+                        "label-caps": ["Inter", "Noto Sans SC"],
+                        "data-mono": ["JetBrains Mono"],
+                        "heading-md": ["Inter", "Noto Sans SC"],
+                        "body-base": ["Inter", "Noto Sans SC"],
+                        "display-bold": ["Inter", "Noto Sans SC"]
+                    },
+                    "fontSize": {
+                        "body-sm": ["13px", {"lineHeight": "18px", "fontWeight": "400"}],
+                        "label-caps": ["11px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
+                        "data-mono": ["13px", {"lineHeight": "16px", "fontWeight": "500"}],
+                        "heading-md": ["18px", {"lineHeight": "24px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "body-base": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "display-bold": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1;
+        }
+        
+        /* High Density Grid Layouts */
+        .matrix-grid {
+            display: grid;
+            grid-template-columns: 48px repeat(7, 1fr);
+            gap: 16px;
+        }
+        
+        .matrix-cell {
+            min-height: 240px;
+        }
+        
+        /* Minimalist Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-base antialiased h-screen flex flex-col overflow-hidden">
+<!-- TopAppBar -->
+<header class="docked full-width top-0 h-[56px] border-b border-slate-200 dark:border-slate-800 flat no shadows flex items-center justify-between w-full px-6 bg-white dark:bg-slate-900 z-50 shrink-0">
+<!-- Left: Logo + Title + Week -->
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2">
+<div class="w-6 h-6 bg-primary rounded flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-sm" data-icon="dashboard" data-weight="fill">dashboard</span>
+</div>
+<h1 class="text-lg font-bold text-slate-900 dark:text-white mr-4 font-heading-md text-heading-md">直播排期策略看板</h1>
+</div>
+<div class="h-4 w-px bg-slate-200"></div>
+<span class="font-body-sm text-body-sm text-slate-500">2026.4.27 - 5.3</span>
+</div>
+<!-- Center: Status Capsules -->
+<div class="hidden md:flex items-center gap-2">
+<div class="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200 font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-[14px]" data-icon="check_circle">check_circle</span>
+                排期表
+            </div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-600 rounded-full border border-slate-200 font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-[14px]" data-icon="group">group</span>
+                用户量级
+            </div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-600 rounded-full border border-slate-200 font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-[14px]" data-icon="history">history</span>
+                历史排期
+            </div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-600 rounded-full border border-slate-200 font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-[14px]" data-icon="tune">tune</span>
+                排期偏好
+            </div>
+<div class="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-600 rounded-full border border-slate-200 font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-[14px]" data-icon="auto_awesome_motion">auto_awesome_motion</span>
+                伪直播复用
+            </div>
+</div>
+<!-- Right: Actions -->
+<div class="flex items-center gap-3">
+<button class="font-body-sm text-body-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors">
+<span class="material-symbols-outlined text-[16px]" data-icon="restart_alt">restart_alt</span>
+                重置数据
+            </button>
+<button class="font-body-sm text-body-sm text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors h-[32px]">
+<span class="material-symbols-outlined text-[16px]" data-icon="upload_file">upload_file</span>
+                导出 Excel
+            </button>
+<button class="font-body-sm text-body-sm text-white bg-primary hover:bg-blue-700 px-4 py-1.5 rounded flex items-center gap-1.5 transition-colors shadow-sm h-[32px]">
+<span class="material-symbols-outlined text-[16px]" data-icon="auto_awesome">auto_awesome</span>
+                自动排期
+            </button>
+</div>
+</header>
+<!-- Main Layout Workspace -->
+<div class="flex flex-1 overflow-hidden relative">
+<!-- Left Sidebar: Session Pool -->
+<aside class="w-[280px] bg-slate-50 dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col z-40 shrink-0">
+<div class="p-4 border-b border-slate-200 flex justify-between items-center bg-white">
+<div>
+<h2 class="font-heading-md text-heading-md text-slate-900">本周直播场次</h2>
+<p class="font-body-sm text-body-sm text-slate-500 mt-0.5">48 场待分配</p>
+</div>
+<button class="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded">
+<span class="material-symbols-outlined text-[18px]" data-icon="filter_list">filter_list</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-3 space-y-2">
+<!-- Draggable Card 1 -->
+<div class="bg-white border border-slate-200 rounded p-3 hover:border-blue-300 hover:shadow-sm transition-all group cursor-grab active:cursor-grabbing relative">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold leading-none">S级</span>
+<span class="font-body-sm text-body-sm font-semibold text-slate-900">逆龄女神瑜伽</span>
+</div>
+<span class="material-symbols-outlined text-slate-300 group-hover:text-slate-500 text-[16px]" data-icon="drag_indicator">drag_indicator</span>
+</div>
+<div class="flex items-center justify-between mt-2">
+<div class="flex items-center gap-2">
+<span class="font-data-mono text-data-mono text-slate-600 text-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]" data-icon="schedule">schedule</span> 07:30
+                            </span>
+<span class="w-1 h-1 rounded-full bg-slate-300"></span>
+<span class="font-label-caps text-label-caps text-emerald-600">中医变美</span>
+</div>
+<span class="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px]">官方</span>
+</div>
+</div>
+<!-- Draggable Card 2 -->
+<div class="bg-white border border-slate-200 rounded p-3 hover:border-blue-300 hover:shadow-sm transition-all group cursor-grab active:cursor-grabbing relative">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-1.5">
+<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[10px] font-bold leading-none">A级</span>
+<span class="font-body-sm text-body-sm font-semibold text-slate-900">气血调理专场</span>
+</div>
+<span class="material-symbols-outlined text-slate-300 group-hover:text-slate-500 text-[16px]" data-icon="drag_indicator">drag_indicator</span>
+</div>
+<div class="flex items-center justify-between mt-2">
+<div class="flex items-center gap-2">
+<span class="font-data-mono text-data-mono text-slate-600 text-xs flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]" data-icon="schedule">schedule</span> 19:00
+                            </span>
+<span class="w-1 h-1 rounded-full bg-slate-300"></span>
+<span class="font-label-caps text-label-caps text-emerald-600">中医变美</span>
+</div>
+<span class="px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px]">个人</span>
+</div>
+</div>
+</div>
+<!-- Bottom Accordion -->
+<div class="border-t border-slate-200 bg-white">
+<button class="w-full flex items-center justify-between p-3 text-slate-700 hover:bg-slate-50 transition-colors">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-400 text-[18px]" data-icon="video_library">video_library</span>
+<span class="font-body-sm text-body-sm font-medium">伪直播推荐库</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-[10px] font-medium">+12 高转</span>
+<span class="material-symbols-outlined text-slate-400 text-[16px]" data-icon="expand_more">expand_more</span>
+</div>
+</button>
+</div>
+</aside>
+<!-- Center Canvas: The Strategy Matrix -->
+<main class="flex-1 flex flex-col bg-slate-100 overflow-hidden relative">
+<!-- Matrix Header (Days) -->
+<div class="bg-white border-b border-slate-200 shrink-0 pr-4 pl-[48px]">
+<div class="grid grid-cols-7 gap-4 py-3">
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-slate-500">周一</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">4/27</div>
+</div>
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-slate-500">周二</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">4/28</div>
+</div>
+<div class="text-center bg-blue-50/50 rounded -m-1 p-1">
+<div class="font-label-caps text-label-caps text-blue-600">周三</div>
+<div class="font-data-mono text-data-mono text-blue-700 mt-1">4/29</div>
+</div>
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-slate-500">周四</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">4/30</div>
+</div>
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-slate-500">周五</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">5/1</div>
+</div>
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-rose-500">周六</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">5/2</div>
+</div>
+<div class="text-center">
+<div class="font-label-caps text-label-caps text-rose-500">周日</div>
+<div class="font-data-mono text-data-mono text-slate-900 mt-1">5/3</div>
+</div>
+</div>
+</div>
+<!-- Matrix Scrollable Area -->
+<div class="flex-1 overflow-auto p-4 matrix-grid relative">
+<!-- Section 1: Morning -->
+<div class="col-span-full grid grid-cols-[48px_1fr] gap-4 mb-4">
+<!-- Ribbon -->
+<div class="bg-amber-100 rounded-l flex items-center justify-center border border-amber-200 border-r-0 relative">
+<span class="writing-vertical-lr rotate-180 font-label-caps text-label-caps text-amber-800 tracking-widest absolute top-1/2 -translate-y-1/2 transform scale-x-[-1] scale-y-[-1]">早间｜晨练</span>
+</div>
+<!-- Row Grid -->
+<div class="grid grid-cols-7 gap-4">
+<!-- Monday -->
+<div class="bg-white border border-slate-200 rounded p-3 shadow-sm flex flex-col matrix-cell relative group hover:border-blue-300">
+<!-- Cell Header -->
+<div class="flex justify-between items-start mb-2">
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">07:00</span>
+<span class="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold leading-none">S</span>
+</div>
+<h3 class="font-body-sm text-body-sm font-bold text-slate-900 leading-tight mb-1 truncate">八段锦晨间带练</h3>
+<div class="flex items-center gap-1.5 mb-3">
+<div class="w-4 h-4 rounded-full bg-slate-200 overflow-hidden">
+<img alt="Avatar" class="w-full h-full object-cover" data-alt="professional portrait headshot of a young asian woman with neutral background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCOgKN45OqgRWYUOLXdpFXHhucBxaTeGENo0ZMHstrJZR0pZ_bBE0-WGFQf7om4PVkRZl__b-fgZ4lODAuCF90JVAqysXX3Ny9QlQ_Nb-XhBAqKHTqp7ThOoIgyXXvBe3SgMOCrbzjH0H5wDPL-rcQryMReAQCgJNqf8Ki7SlyK1cr1YknI6MnDxf49eTXiAB9MlHyS8G-QgFyWliyMt5H_drmDVYFeDTFqQcaXs28quu9esdX7XFzxeNY-SAWAuD5odKpolMl_zM8Q"/>
+</div>
+<span class="text-xs text-slate-500">李导师</span>
+</div>
+<!-- KPI -->
+<div class="mt-auto pt-2 border-t border-slate-100">
+<div class="text-[10px] text-slate-400 mb-0.5">预估曝光</div>
+<div class="font-data-mono text-data-mono font-bold text-slate-800 text-lg">142,800</div>
+</div>
+<!-- Resource Distribution Bar -->
+<div class="flex h-1.5 w-full rounded-full overflow-hidden mt-2 gap-0.5">
+<div class="bg-emerald-500 w-[60%]"></div>
+<div class="bg-pink-500 w-[30%]"></div>
+<div class="bg-purple-500 w-[10%]"></div>
+</div>
+</div>
+<!-- Tuesday: Conflict State -->
+<div class="bg-white border-2 border-red-400 rounded p-3 shadow-sm flex flex-col matrix-cell relative bg-red-50/30">
+<div class="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center shadow-sm">
+<span class="material-symbols-outlined text-[12px] font-bold" data-icon="priority_high">priority_high</span>
+</div>
+<div class="flex justify-between items-start mb-2">
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">07:30</span>
+<span class="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold leading-none">S</span>
+</div>
+<h3 class="font-body-sm text-body-sm font-bold text-slate-900 leading-tight mb-1">逆龄女神瑜伽</h3>
+<div class="mt-auto p-2 bg-red-50 border border-red-100 rounded mt-2">
+<div class="text-[10px] font-bold text-red-700 flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]" data-icon="warning">warning</span> 人群冲突
+                                </div>
+<div class="text-[10px] text-red-600 mt-1 leading-tight">普拉提SA人群连续触达</div>
+</div>
+</div>
+<!-- Wednesday -->
+<div class="bg-white border border-blue-400 rounded p-3 shadow-md flex flex-col matrix-cell relative ring-1 ring-blue-400/50">
+<div class="flex justify-between items-start mb-2">
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">07:30</span>
+<span class="px-1.5 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[10px] font-bold leading-none">A</span>
+</div>
+<h3 class="font-body-sm text-body-sm font-bold text-slate-900 leading-tight mb-1">肩颈理疗专场</h3>
+<div class="mt-auto pt-2 border-t border-slate-100">
+<div class="text-[10px] text-slate-400 mb-0.5">预估曝光</div>
+<div class="font-data-mono text-data-mono font-bold text-slate-800 text-lg">98,500</div>
+</div>
+</div>
+<!-- Empty States for rest of week -->
+<button class="border-2 border-dashed border-slate-300 rounded hover:border-blue-400 hover:bg-blue-50/50 flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 transition-colors matrix-cell bg-slate-50/50">
+<span class="material-symbols-outlined text-[24px] mb-1" data-icon="add">add</span>
+<span class="font-body-sm text-body-sm">添加排期</span>
+</button>
+<button class="border-2 border-dashed border-slate-300 rounded hover:border-blue-400 hover:bg-blue-50/50 flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 transition-colors matrix-cell bg-slate-50/50">
+<span class="material-symbols-outlined text-[24px] mb-1" data-icon="add">add</span>
+<span class="font-body-sm text-body-sm">添加排期</span>
+</button>
+<button class="border-2 border-dashed border-slate-300 rounded hover:border-blue-400 hover:bg-blue-50/50 flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 transition-colors matrix-cell bg-slate-50/50">
+<span class="material-symbols-outlined text-[24px] mb-1" data-icon="add">add</span>
+<span class="font-body-sm text-body-sm">添加排期</span>
+</button>
+<button class="border-2 border-dashed border-slate-300 rounded hover:border-blue-400 hover:bg-blue-50/50 flex flex-col items-center justify-center text-slate-400 hover:text-blue-600 transition-colors matrix-cell bg-slate-50/50">
+<span class="material-symbols-outlined text-[24px] mb-1" data-icon="add">add</span>
+<span class="font-body-sm text-body-sm">添加排期</span>
+</button>
+</div>
+</div>
+<!-- Section 2: Evening (Simplified visually for density) -->
+<div class="col-span-full grid grid-cols-[48px_1fr] gap-4 mb-4">
+<div class="bg-blue-100 rounded-l flex items-center justify-center border border-blue-200 border-r-0 relative">
+<span class="writing-vertical-lr rotate-180 font-label-caps text-label-caps text-blue-800 tracking-widest absolute top-1/2 -translate-y-1/2 transform scale-x-[-1] scale-y-[-1]">晚间｜晚IP专场</span>
+</div>
+<div class="grid grid-cols-7 gap-4">
+<!-- Dual Field Example -->
+<div class="bg-white border border-slate-200 rounded shadow-sm flex flex-col matrix-cell hover:border-blue-300 overflow-hidden col-span-2">
+<!-- Dual split header -->
+<div class="flex border-b border-slate-100 bg-slate-50/80">
+<div class="flex-1 p-2 border-r border-slate-200 flex justify-between items-center">
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">19:00</span>
+<span class="text-[10px] text-slate-400">中医变美</span>
+</div>
+<div class="flex-1 p-2 flex justify-between items-center">
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">20:30</span>
+<span class="text-[10px] text-slate-400">气血调理</span>
+</div>
+</div>
+<div class="p-3 flex-1 flex flex-col">
+<h3 class="font-body-sm text-body-sm font-bold text-slate-900 leading-tight mb-1">【双拼】晚间黄金档联播</h3>
+<div class="mt-auto pt-2 border-t border-slate-100">
+<div class="font-data-mono text-data-mono font-bold text-slate-800 text-xl">272,513</div>
+</div>
+</div>
+</div>
+<!-- Empty slots -->
+<button class="border-2 border-dashed border-slate-300 rounded hover:border-blue-400 hover:bg-blue-50/50 flex flex-col items-center justify-center text-slate-400 matrix-cell bg-slate-50/50 col-span-5"></button>
+</div>
+</div>
+</div>
+</main>
+<!-- Right Sidebar: Details & Settings -->
+<aside class="w-[320px] bg-white border-l border-slate-200 flex flex-col shrink-0 z-30 shadow-[-4px_0_24px_rgba(0,0,0,0.02)]">
+<!-- Top Details Panel -->
+<div class="p-4 border-b border-slate-200">
+<div class="flex items-center justify-between mb-3">
+<h2 class="font-heading-md text-heading-md text-slate-900">直播配置详情</h2>
+<button class="text-slate-400 hover:text-slate-600">
+<span class="material-symbols-outlined text-[18px]" data-icon="close">close</span>
+</button>
+</div>
+<!-- Selected Entity Context -->
+<div class="bg-slate-50 rounded p-3 mb-4 border border-slate-100">
+<div class="flex items-center gap-2 mb-1">
+<span class="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-bold">S级</span>
+<span class="font-body-sm text-body-sm font-bold text-slate-900">逆龄女神瑜伽</span>
+</div>
+<div class="font-data-mono text-data-mono text-slate-500 text-xs">周二 07:30 - 09:00</div>
+</div>
+<!-- Alert -->
+<div class="bg-red-50 border border-red-200 rounded p-2.5 mb-4 flex gap-2 items-start">
+<span class="material-symbols-outlined text-red-500 text-[16px] mt-0.5" data-icon="warning">warning</span>
+<div class="font-body-sm text-body-sm text-red-800 text-xs leading-tight">
+<strong>触达频控警告：</strong>普拉提SA人群本周已在周二晨练触达，建议更换资源位。
+                    </div>
+</div>
+<!-- Allocation Controls -->
+<div class="mb-2 flex justify-between items-end">
+<span class="font-label-caps text-label-caps text-slate-500">分配人群池 (3)</span>
+<button class="text-blue-600 hover:text-blue-800 font-body-sm text-body-sm text-xs flex items-center gap-0.5">
+<span class="material-symbols-outlined text-[14px]" data-icon="add">add</span> 添加分配
+                    </button>
+</div>
+<div class="space-y-2 mb-4">
+<!-- Allocation Item 1 -->
+<div class="flex items-center justify-between p-2 border border-slate-200 rounded hover:border-slate-300">
+<div class="flex items-center gap-2">
+<div class="w-1 h-3 bg-emerald-500 rounded-full"></div>
+<span class="font-body-sm text-body-sm text-slate-700">中医变美 SA</span>
+</div>
+<span class="font-data-mono text-data-mono text-slate-600 text-xs">12.5w</span>
+</div>
+<!-- Allocation Item 2 -->
+<div class="flex items-center justify-between p-2 border border-slate-200 rounded hover:border-slate-300 bg-red-50/30 border-red-200">
+<div class="flex items-center gap-2">
+<div class="w-1 h-3 bg-pink-500 rounded-full"></div>
+<span class="font-body-sm text-body-sm text-red-700">普拉提 SA</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="font-data-mono text-data-mono text-red-600 text-xs font-bold">4.2w</span>
+<button class="text-slate-400 hover:text-red-600"><span class="material-symbols-outlined text-[14px]" data-icon="close">close</span></button>
+</div>
+</div>
+</div>
+<!-- Suggestion Action -->
+<div class="bg-blue-50 border border-blue-100 rounded p-3 flex justify-between items-center">
+<div class="flex items-center gap-1.5 text-blue-800 text-xs">
+<span class="material-symbols-outlined text-[14px]" data-icon="lightbulb">lightbulb</span>
+<span>系统推荐替换为 <strong>骨盆修复SA</strong></span>
+</div>
+<button class="text-blue-600 font-bold text-xs hover:underline">采纳建议</button>
+</div>
+</div>
+<!-- Bottom Tree List: User Volume -->
+<div class="flex-1 overflow-y-auto p-4 bg-slate-50/50">
+<h3 class="font-label-caps text-label-caps text-slate-500 mb-3">全量人群库存</h3>
+<div class="space-y-1">
+<!-- Category Header -->
+<div class="flex items-center gap-1 text-slate-700 py-1 cursor-pointer hover:bg-slate-100 rounded px-1 -ml-1">
+<span class="material-symbols-outlined text-[16px] text-slate-400" data-icon="arrow_drop_down">arrow_drop_down</span>
+<span class="font-body-sm text-body-sm font-semibold">中医变美大类</span>
+<span class="ml-auto font-data-mono text-data-mono text-xs text-slate-400">450k</span>
+</div>
+<!-- Sub Items -->
+<div class="pl-6 space-y-1 border-l border-slate-200 ml-2">
+<div class="flex items-center justify-between py-1.5 hover:bg-white rounded px-2 -ml-2 group cursor-pointer">
+<span class="font-body-sm text-body-sm text-slate-600 text-xs">面部拨筋 SA</span>
+<div class="flex items-center gap-2">
+<span class="px-1 py-0.5 bg-slate-200 text-slate-600 rounded text-[9px] font-mono leading-none">已排</span>
+<span class="font-data-mono text-data-mono text-slate-500 text-xs">85k</span>
+</div>
+</div>
+<div class="flex items-center justify-between py-1.5 hover:bg-white rounded px-2 -ml-2 group cursor-pointer">
+<span class="font-body-sm text-body-sm text-slate-600 text-xs">八段锦 A</span>
+<div class="flex items-center gap-2">
+<span class="px-1 py-0.5 bg-amber-100 text-amber-700 rounded text-[9px] font-mono leading-none">3日未触</span>
+<span class="font-data-mono text-data-mono text-slate-700 text-xs font-bold">120k</span>
+</div>
+</div>
+<div class="flex items-center justify-between py-1.5 hover:bg-white rounded px-2 -ml-2 group cursor-pointer">
+<span class="font-body-sm text-body-sm text-slate-400 text-xs">艾灸调理 B</span>
+<div class="flex items-center gap-2">
+<span class="px-1 py-0.5 bg-red-100 text-red-700 rounded text-[9px] font-mono leading-none">30日复用</span>
+<span class="font-data-mono text-data-mono text-slate-400 text-xs">45k</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</aside>
+</div>
+</body></html>
