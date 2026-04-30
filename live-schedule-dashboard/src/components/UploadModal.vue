@@ -109,6 +109,10 @@ async function handleSubmit() {
 
   overallStatus.value = 'done'
 
+  // Close modal immediately so the user isn't blocked while autoSchedule runs.
+  emit('done')
+  emit('close')
+
   // Always re-run autoSchedule when audience data is available.
   // Completed schedule files may contain cross-line audience assignments
   // that violate the垂类 rule; we reset and regenerate from scratch.
@@ -118,9 +122,6 @@ async function handleSubmit() {
   if (hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
     await store.autoSchedule()
   }
-
-  emit('done')
-  emit('close')
 }
 
 function reset() {

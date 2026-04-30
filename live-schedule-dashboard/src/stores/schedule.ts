@@ -452,6 +452,16 @@ export const useScheduleStore = defineStore('schedule', () => {
       seg.assignedTo = undefined
     }
 
+    // Build a fast lookup map for cross-category prefs so the sort comparator
+    // doesn't do an O(n) .find() inside an O(n log n) sort.
+    const crossPrefMap = new Map<string, { crossRate: number; ltv: number }>()
+    for (const p of crossCategoryPrefs.value) {
+      const key = `${normalizeCategory(p.fromCategory)}|${normalizeCategory(p.toCategory)}`
+      if (!crossPrefMap.has(key)) {
+        crossPrefMap.set(key, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
+      }
+    }
+
     // Score and sort (skip friend-circle)
     const scored = liveStreams.value
       .filter((live) => live.slot !== 'friend-circle')
@@ -510,20 +520,13 @@ export const useScheduleStore = defineStore('schedule', () => {
         // 同品类互斥：任何直播都不能宣发同品类的 audience
         .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
         .sort((a, b) => {
-          // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
-          const aRate = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(a.category) && normalizeCategory(p.toCategory) === liveCat
-          )?.crossRate || 0
-          const bRate = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(b.category) && normalizeCategory(p.toCategory) === liveCat
-          )?.crossRate || 0
+          const aPref = crossPrefMap.get(`${normalizeCategory(a.category)}|${liveCat}`)
+          const bPref = crossPrefMap.get(`${normalizeCategory(b.category)}|${liveCat}`)
+          const aRate = aPref?.crossRate || 0
+          const bRate = bPref?.crossRate || 0
           if (bRate !== aRate) return bRate - aRate
-          const aLTV = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(a.category) && normalizeCategory(p.toCategory) === liveCat
-          )?.ltv || 0
-          const bLTV = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(b.category) && normalizeCategory(p.toCategory) === liveCat
-          )?.ltv || 0
+          const aLTV = aPref?.ltv || 0
+          const bLTV = bPref?.ltv || 0
           if (bLTV !== aLTV) return bLTV - aLTV
           return b.count - a.count
         })
@@ -539,6 +542,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         if (candidates.length > 0) {
           tryAssign(live, candidates[0])
           changed = true
+          // Yield frequently so clicks (e.g. cancel) can be handled
+          await new Promise((resolve) => setTimeout(resolve, 0))
         }
       }
       // Yield to browser so UI stays responsive
