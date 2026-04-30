@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
 import type { LineType, AudienceSegment } from '@/types'
-import { CATEGORY_TO_LINE } from '@/utils/categoryMapping'
+import { CATEGORY_TO_LINE, normalizeCategory, isSameCategoryFamily } from '@/utils/categoryMapping'
 
 const store = useScheduleStore()
 
@@ -22,16 +22,11 @@ const selectedLive = computed(() => store.selectedLive)
 
 // Extract cohort month from timeRange (same logic as store)
 function extractCohortMonth(timeRange: string): string | null {
-  const parts = timeRange.split('-')
-  if (parts.length < 2) {
-    const match = timeRange.match(/(\d{4})\.(\d{1,2})/)
-    if (!match) return null
-    return `${match[1]}-${match[2].padStart(2, '0')}`
-  }
-  const endPart = parts[parts.length - 1].trim()
-  const match = endPart.match(/(\d{4})\.(\d{1,2})/)
-  if (!match) return null
-  return `${match[1]}-${match[2].padStart(2, '0')}`
+  if (!timeRange) return null
+  const allMatches = Array.from(timeRange.matchAll(/(\d{4})[\.年](\d{1,2})/g))
+  if (allMatches.length === 0) return null
+  const lastMatch = allMatches[allMatches.length - 1]
+  return `${lastMatch[1]}-${lastMatch[2].padStart(2, '0')}`
 }
 
 // ========== Smart Recommendations ==========
@@ -50,50 +45,82 @@ interface Recommendation {
 
 const recommendations = computed(() => {
   if (!selectedLive.value) return []
-  const liveCat = selectedLive.value.category
+  const liveCat = normalizeCategory(selectedLive.value.category)
   const liveLine = selectedLive.value.line
 
   const recs: Recommendation[] = []
   const added = new Set<string>()
 
-  // Find all crossCategoryPrefs where toCategory matches the live category
-  for (const pref of store.crossCategoryPrefs) {
-    if (pref.toCategory !== liveCat) continue
-    if (pref.toLine !== liveLine) continue
+  // 1. Group available audience segments by (normalized category, cohortMonth)
+  const segGroups = new Map<string, { segs: AudienceSegment[]; totalCount: number }>()
+  for (const seg of store.audienceSegments) {
+    if (seg.line !== liveLine) continue
+    if (seg.status !== 'available') continue
+    // 同品类互斥：不能推荐同品类族的 audience
+    if (isSameCategoryFamily(liveCat, seg.category)) continue
 
-    // Find matching audience segments (same fromCategory, line, and cohortMonth)
-    const segs = store.audienceSegments.filter(
-      (s) =>
-        s.category === pref.fromCategory &&
-        s.line === liveLine &&
-        s.status === 'available' &&
-        extractCohortMonth(s.timeRange) === pref.cohortMonth
+    const segCat = normalizeCategory(seg.category)
+    const cohortMonth = extractCohortMonth(seg.timeRange) || 'unknown'
+    const key = `${segCat}|${cohortMonth}`
+    if (!segGroups.has(key)) {
+      segGroups.set(key, { segs: [], totalCount: 0 })
+    }
+    const group = segGroups.get(key)!
+    group.segs.push(seg)
+    group.totalCount += seg.count
+  }
+
+  // 2. For each segment group, find the best matching cross-pref
+  for (const [key, group] of segGroups) {
+    const [segCat, cohortMonth] = key.split('|')
+
+    // Try exact match with cohortMonth
+    let pref = store.crossCategoryPrefs.find(
+      (p) => normalizeCategory(p.toCategory) === liveCat && normalizeCategory(p.fromCategory) === segCat && p.cohortMonth === cohortMonth
     )
-    if (segs.length === 0) continue
+    // Fallback: exact match ignoring cohortMonth
+    if (!pref) {
+      pref = store.crossCategoryPrefs.find(
+        (p) => normalizeCategory(p.toCategory) === liveCat && normalizeCategory(p.fromCategory) === segCat
+      )
+    }
+    // Fallback: family match with cohortMonth
+    if (!pref) {
+      pref = store.crossCategoryPrefs.find(
+        (p) => normalizeCategory(p.toCategory) === liveCat && isSameCategoryFamily(p.fromCategory, segCat) && p.cohortMonth === cohortMonth
+      )
+    }
+    // Fallback: family match ignoring cohortMonth
+    if (!pref) {
+      pref = store.crossCategoryPrefs.find(
+        (p) => normalizeCategory(p.toCategory) === liveCat && isSameCategoryFamily(p.fromCategory, segCat)
+      )
+    }
 
-    const totalCount = segs.reduce((sum, s) => sum + s.count, 0)
-    const key = `${pref.fromCategory}|${pref.cohortMonth}`
+    if (!pref) continue
+
     if (added.has(key)) continue
     added.add(key)
 
     const crossRate = pref.crossRate || 0
     const conversionRate = pref.conversionRate || 0
     const ltv = pref.ltv || 0
+    const totalCount = group.totalCount
     const leads = totalCount * crossRate
     const firstOrders = leads * conversionRate
     const gmv = firstOrders * ltv
 
     recs.push({
-      category: pref.fromCategory,
-      cohortMonth: pref.cohortMonth,
+      category: segCat,
+      cohortMonth,
       count: totalCount,
       crossRate,
       conversionRate,
       ltv,
       expectedGMV: gmv,
-      isSameFamily: pref.fromCategory === liveCat,
+      isSameFamily: isSameCategoryFamily(segCat, liveCat),
       source: crossRate > 0 ? 'live' : 'guide',
-      segments: segs,
+      segments: group.segs,
     })
   }
 
