@@ -439,7 +439,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
   }
 
-  function autoSchedule() {
+  async function autoSchedule() {
     // Reset
     for (const live of liveStreams.value) {
       live.assignedAudiences = []
@@ -540,6 +540,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           changed = true
         }
       }
+      // Yield to browser so UI stays responsive
+      await new Promise((resolve) => setTimeout(resolve, 0))
     }
 
     // NOTE: Cross-line assignment is intentionally removed.

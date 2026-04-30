@@ -27,11 +27,11 @@ function setGrade(cat: string, grade: GradeType | '') {
   if (grade) store.setCategoryGrade(cat, grade)
 }
 
-function applyAll() {
+async function applyAll() {
   store.applyCategoryGrades()
   store.applyNameOverrides()
   if (autoReschedule.value && store.audienceSegments.length > 0) {
-    store.autoSchedule()
+    await store.autoSchedule()
   }
 }
 </script>

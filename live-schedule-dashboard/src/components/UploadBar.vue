@@ -11,8 +11,8 @@ const showModal = ref(false)
 const showCategoryManager = ref(false)
 const showAttribution = ref(false)
 
-function handleAutoSchedule() {
-  store.autoSchedule()
+async function handleAutoSchedule() {
+  await store.autoSchedule()
 }
 
 function handleExport() {

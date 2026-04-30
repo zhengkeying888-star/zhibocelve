@@ -116,7 +116,7 @@ async function handleSubmit() {
   const hasAudience = store.audienceSegments.length > 0
   const hasCrossPref = files.value.some(f => f.key === 'crossPref' && f.status === 'done')
   if (hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
-    store.autoSchedule()
+    await store.autoSchedule()
   }
 
   emit('done')
