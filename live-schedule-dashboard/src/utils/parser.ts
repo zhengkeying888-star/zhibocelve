@@ -480,27 +480,69 @@ export function parseHistoryFromScheduleBook(buffer: ArrayBuffer, excludeSheetNa
 // ====== 4. Parse Cross Pref Sheet ======
 export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPref[]; crossCategoryPrefs: CrossCategoryPref[] } {
   const workbook = XLSX.read(buffer, { type: 'array' })
-  const sheet = workbook.Sheets[workbook.SheetNames[0]]
-  const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]
   const crossPrefs: CrossPref[] = []
   const crossCategoryPrefs: CrossCategoryPref[] = []
 
+  // First sheet: category -> line mapping (legacy, for crossPrefs)
+  const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+  const firstJson = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as any[][]
+  if (firstJson.length >= 2) {
+    const firstHeaders = firstJson[0].map((h: any) => normCell(h))
+    const catIdx = firstHeaders.findIndex(h => h.includes('跨科品类'))
+    const lineIdx = firstHeaders.findIndex(h => h.includes('归属线级'))
+    for (let i = 1; i < firstJson.length; i++) {
+      const row = firstJson[i]
+      if (!row) continue
+      const category = normalizeCategory(normCell(row[catIdx >= 0 ? catIdx : 0]))
+      const lineStr = normCell(row[lineIdx >= 0 ? lineIdx : 1])
+      if (!category || !lineStr) continue
+      const line = parseLine(lineStr)
+      crossPrefs.push({ fromCategory: category, toLine: line, rate: 0 })
+    }
+  }
+
+  // Find the data sheet with actual cross-rate / LTV records
+  let dataSheetName: string | null = null
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name]
+    const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]
+    if (json.length < 2) continue
+    const headers = json[0].map((h: any) => normCell(h)).join(' ')
+    if (headers.includes('跨科率') && headers.includes('LTV') && headers.includes('公海')) {
+      dataSheetName = name
+      break
+    }
+    // Fallback: look for day60 cross-category data pattern
+    if (headers.includes('day60') || headers.includes('跨科线索数')) {
+      dataSheetName = name
+      break
+    }
+  }
+
+  if (!dataSheetName) {
+    return { crossPrefs, crossCategoryPrefs }
+  }
+
+  const dataSheet = workbook.Sheets[dataSheetName]
+  const json = XLSX.utils.sheet_to_json(dataSheet, { header: 1, defval: '' }) as any[][]
   if (json.length < 2) return { crossPrefs, crossCategoryPrefs }
 
   const headers = json[0].map((h: any) => normCell(h))
-  const fromIdx = headers.findIndex(h => h.includes('公海品类'))
-  const toIdx = headers.findIndex(h => h.includes('跨科品类'))
-  const rateIdx = headers.findIndex(h => h.includes('跨科率'))
-  const ltvIdx = headers.findIndex(h => h.includes('ltv') || h.includes('LTV'))
+  // Data format: [month, fromCategory, toCategory, totalLeads, day60CrossLeads, firstOrderCount, firstOrderGMV, crossRate, conversionRate, LTV, ...]
+  const fromIdx = 1
+  const toIdx = 2
+  const rateIdx = headers.findIndex(h => h.includes('跨科率_导量') || h.includes('跨科率'))
+  const ltvIdx = headers.findIndex(h => h.includes('LTV_导量') || h.includes('LTV'))
 
   for (let i = 1; i < json.length; i++) {
     const row = json[i]
     if (!row) continue
 
-    const rawFrom = normCell(row[fromIdx >= 0 ? fromIdx : 1])
-    const rawTo = normCell(row[toIdx >= 0 ? toIdx : 2])
+    const rawFrom = normCell(row[fromIdx])
+    const rawTo = normCell(row[toIdx])
     const rate = Number(row[rateIdx >= 0 ? rateIdx : 7] || 0)
-    const ltv = Number(row[ltvIdx >= 0 ? ltvIdx : 8] || 0)
+    const ltvVal = row[ltvIdx >= 0 ? ltvIdx : 9]
+    const ltv = ltvVal === '' || ltvVal === undefined ? 0 : Number(ltvVal)
 
     if (!rawFrom || !rawTo) continue
 
@@ -515,7 +557,7 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
       ltv: isNaN(ltv) ? 0 : ltv,
     })
 
-    // Also populate legacy CrossPref for backward compatibility in autoSchedule
+    // Update legacy CrossPref with actual rate
     const existing = crossPrefs.find(p => p.fromCategory === fromCategory && p.toLine === parseLine(toCategory))
     if (existing) {
       existing.rate = Math.max(existing.rate, isNaN(rate) ? 0 : rate)
@@ -565,12 +607,14 @@ export function parseScheduleWorkbook(buffer: ArrayBuffer, fileName?: string): {
     const segmentMap = new Map<string, AudienceSegment>()
     for (const live of lives) {
       for (const aud of live.assignedAudiences) {
-        const key = `${aud.line}-${normalizeCategory(aud.category)}-${aud.timeRange}`
+        const canonicalCat = normalizeCategory(aud.category)
+        const correctLine = parseLineFromCategory(canonicalCat)
+        const key = `${correctLine}-${canonicalCat}-${aud.timeRange}`
         if (!segmentMap.has(key)) {
           segmentMap.set(key, {
             id: generateId(),
-            line: aud.line,
-            category: normalizeCategory(aud.category),
+            line: correctLine,
+            category: canonicalCat,
             timeRange: aud.timeRange,
             count: aud.count,
             status: 'available',
