@@ -20,6 +20,22 @@ function selectLive(id: string) {
 
 <template>
   <main class="flex-1 flex flex-col bg-[#f8f9ff] overflow-hidden">
+    <!-- Scheduling Rules Banner -->
+    <div class="px-4 py-2 bg-blue-50 border-b border-blue-100 shrink-0">
+      <div class="flex items-center gap-2 text-xs text-blue-800">
+        <span class="font-semibold shrink-0">排期规则：</span>
+        <span class="shrink-0">① 评级定流量 S>A>B>C</span>
+        <span class="text-blue-300">|</span>
+        <span class="shrink-0">② 同品类互斥</span>
+        <span class="text-blue-300">|</span>
+        <span class="shrink-0">③ 同线主宣发（按跨科率）</span>
+        <span class="text-blue-300">|</span>
+        <span class="shrink-0">④ 伪直播30天频控</span>
+        <span class="text-blue-300">|</span>
+        <span class="shrink-0">⑤ 当日去重</span>
+      </div>
+    </div>
+
     <!-- Matrix Header (Days) -->
     <div class="bg-white border-b border-slate-200 shrink-0 pr-4 pl-12">
       <div class="grid grid-cols-7 gap-4 py-3">

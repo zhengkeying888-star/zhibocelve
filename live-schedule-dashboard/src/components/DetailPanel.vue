@@ -212,6 +212,14 @@ function getAttributionForAudience(segmentId: string) {
           </div>
         </div>
 
+        <!-- Fake Live Warning -->
+        <div v-if="selectedLive.type === 'fake'" class="bg-amber-50 border border-amber-200 rounded p-2.5 mb-4 flex gap-2 items-start">
+          <span class="text-amber-500 text-base mt-0.5">&#9888;</span>
+          <div class="text-xs text-amber-800 leading-tight">
+            <strong>伪直播频控：</strong>30天内同一人群不得复用2次。请确认该品类+时间段的历史复用间隔 ≥ 30天。
+          </div>
+        </div>
+
         <!-- Alert -->
         <div v-if="selectedLive.conflictReasons.length > 0" class="bg-red-50 border border-red-200 rounded p-2.5 mb-4 flex gap-2 items-start">
           <span class="text-red-500 text-base mt-0.5">!</span>

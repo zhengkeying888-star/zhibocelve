@@ -786,7 +786,7 @@ function parseAudienceAssignmentRow(row: any[], weekDays: WeekDay[], currentSlot
       if (match && currentTimeRange) {
         const category = normalizeCategory(match[1].trim())
         const count = parseInt(match[2], 10)
-        const targetLive = dayLives.find(l => parseLine(l.name) === lineKey)
+        const targetLive = dayLives.find(l => parseLine(l.name) === lineKey) || dayLives[0]
         if (targetLive) {
           targetLive.assignedAudiences.push({
             segmentId: generateId(),

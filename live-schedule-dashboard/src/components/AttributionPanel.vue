@@ -54,9 +54,15 @@ function selectLive(id: string) {
               <h2 class="text-lg font-bold text-[#0b1c30]">排期归因看板</h2>
               <p class="text-xs text-slate-500 mt-0.5">基于公海品类→跨科品类的 day60 跨科率与 LTV 数据</p>
             </div>
-            <button class="text-slate-400 hover:text-slate-600 w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 transition-colors" @click="emit('close')">
-              &times;
-            </button>
+            <div class="flex items-center gap-4">
+              <div class="text-right">
+                <div class="text-[10px] text-slate-500">本周预计GMV</div>
+                <div class="text-lg font-mono font-bold text-emerald-700">¥{{ (totals.gmv / 10000).toFixed(1) }}w</div>
+              </div>
+              <button class="text-slate-400 hover:text-slate-600 w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 transition-colors" @click="emit('close')">
+                &times;
+              </button>
+            </div>
           </div>
 
           <!-- Filters -->
