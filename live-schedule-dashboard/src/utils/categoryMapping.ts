@@ -182,3 +182,9 @@ export function parseLineFromCategory(category: string): LineType {
   const canonical = normalizeCategory(category)
   return CATEGORY_TO_LINE[canonical] || 'health'
 }
+
+export function isSameCategoryFamily(liveCat: string, segCat: string): boolean {
+  const lc = normalizeCategory(liveCat).toLowerCase().replace(/\s+/g, '')
+  const sc = normalizeCategory(segCat).toLowerCase().replace(/\s+/g, '')
+  return sc.includes(lc) || lc.includes(sc)
+}

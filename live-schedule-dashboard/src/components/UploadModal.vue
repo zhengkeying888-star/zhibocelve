@@ -95,7 +95,11 @@ async function handleSubmit() {
           break
         }
       }
-      store.updateUploadStatus(item.key as any, true)
+      const validKeys = ['schedule', 'audience', 'history', 'crossPref', 'fakeHistory'] as const
+      type UploadKey = typeof validKeys[number]
+      if (validKeys.includes(item.key as UploadKey)) {
+        store.updateUploadStatus(item.key as UploadKey, true)
+      }
       item.status = 'done'
     } catch (err) {
       console.error('Parse error:', err)
@@ -108,8 +112,10 @@ async function handleSubmit() {
   // Always re-run autoSchedule when audience data is available.
   // Completed schedule files may contain cross-line audience assignments
   // that violate the垂类 rule; we reset and regenerate from scratch.
+  // Also re-run when cross-pref is uploaded because sorting depends on crossRate/LTV.
   const hasAudience = store.audienceSegments.length > 0
-  if (hasAudience) {
+  const hasCrossPref = files.value.some(f => f.key === 'crossPref' && f.status === 'done')
+  if (hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
     store.autoSchedule()
   }
 

@@ -81,6 +81,28 @@ export interface FakeLiveHistoryItem {
   isQualified: boolean
 }
 
+export interface AttributionItem {
+  segmentId: string
+  category: string
+  line: LineType
+  count: number
+  crossRate: number
+  ltv: number
+  expectedConversion: number
+  expectedGMV: number
+}
+
+export interface LiveAttribution {
+  liveId: string
+  name: string
+  category: string
+  line: LineType
+  totalExposure: number
+  expectedConversion: number
+  expectedGMV: number
+  items: AttributionItem[]
+}
+
 export interface WeekDay {
   label: string
   date: string

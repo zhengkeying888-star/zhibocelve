@@ -12,8 +12,11 @@ import type {
   GradeType,
   AssignedAudience,
   WeekDay,
+  LiveAttribution,
+  AttributionItem,
 } from '@/types'
-import { normalizeCategory } from '@/utils/categoryMapping'
+import { normalizeCategory, isSameCategoryFamily } from '@/utils/categoryMapping'
+import { validateSchedule } from '@/utils/scheduleValidator'
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -98,28 +101,6 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
     return Array.from(set).sort()
   })
-
-  interface AttributionItem {
-    segmentId: string
-    category: string
-    line: LineType
-    count: number
-    crossRate: number
-    ltv: number
-    expectedConversion: number
-    expectedGMV: number
-  }
-
-  interface LiveAttribution {
-    liveId: string
-    name: string
-    category: string
-    line: LineType
-    totalExposure: number
-    expectedConversion: number
-    expectedGMV: number
-    items: AttributionItem[]
-  }
 
   const liveAttribution = computed((): LiveAttribution[] => {
     const result: LiveAttribution[] = []
@@ -298,6 +279,18 @@ export const useScheduleStore = defineStore('schedule', () => {
     const seg = audienceSegments.value.find((a) => a.id === segmentId)
     if (!live || !seg) return
 
+    // Enforce same-line rule
+    if (seg.line !== live.line) {
+      console.warn('Cross-line assignment blocked:', seg.line, '->', live.line)
+      return
+    }
+
+    // Enforce same-category exclusion
+    if (isSameCategoryFamily(live.category, seg.category)) {
+      console.warn('Same-category assignment blocked:', live.category, '->', seg.category)
+      return
+    }
+
     // Check conflicts
     const conflicts = checkConflicts(live, seg)
     if (conflicts.length > 0) {
@@ -385,12 +378,6 @@ export const useScheduleStore = defineStore('schedule', () => {
         live.conflictReasons.push(...conflicts)
       }
     }
-  }
-
-  function isSameCategoryFamily(liveCat: string, segCat: string): boolean {
-    const lc = normalizeCategory(liveCat).toLowerCase().replace(/\s+/g, '')
-    const sc = normalizeCategory(segCat).toLowerCase().replace(/\s+/g, '')
-    return sc.includes(lc) || lc.includes(sc)
   }
 
   function autoSchedule() {
@@ -502,6 +489,16 @@ export const useScheduleStore = defineStore('schedule', () => {
     //                interest audience -> interest live only.
     // If a live cannot reach its target with same-line audience,
     // the user can manually add cross-line segments in DetailPanel.
+
+    // Validate schedule after generation
+    const validation = validateSchedule(liveStreams.value, audienceSegments.value, crossCategoryPrefs.value)
+    if (!validation.passed) {
+      console.error('排期验证失败:', validation.errors)
+    }
+    if (validation.warnings.length > 0) {
+      console.warn('排期警告:', validation.warnings)
+    }
+    console.log('排期统计:', validation.stats)
   }
 
   function loadMockData() {

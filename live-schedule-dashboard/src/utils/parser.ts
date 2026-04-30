@@ -834,7 +834,7 @@ function parseAudienceAssignmentRow(row: any[], weekDays: WeekDay[], currentSlot
         if (targetLive) {
           targetLive.assignedAudiences.push({
             segmentId: generateId(),
-            line: lineKey,
+            line: targetLive.line,
             category,
             timeRange: currentTimeRange,
             count,

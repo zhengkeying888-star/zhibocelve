@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
-import type { LineType } from '@/types'
+import type { LineType, AudienceSegment } from '@/types'
 
 const store = useScheduleStore()
 
@@ -100,7 +100,7 @@ const mergedPoolByLine = computed(() => {
   return result
 })
 
-function getMergedStatus(segments: typeof store.audienceSegments): 'available' | 'used' | 'conflict' {
+function getMergedStatus(segments: AudienceSegment[]): 'available' | 'used' | 'conflict' {
   if (segments.every((s) => s.status === 'used')) return 'used'
   if (segments.some((s) => s.status === 'available')) return 'available'
   return 'conflict'
@@ -252,7 +252,7 @@ function getAttributionForAudience(segmentId: string) {
             >
               <div class="flex items-center justify-between mb-1">
                 <div class="flex items-center gap-2">
-                  <div class="w-1 h-3 rounded-full" :class="lineDotClass[line]"></div>
+                  <div class="w-1 h-3 rounded-full" :class="lineDotClass[aud.line]"></div>
                   <span class="text-sm text-slate-700">{{ aud.category }}</span>
                 </div>
                 <div class="flex items-center gap-2">
