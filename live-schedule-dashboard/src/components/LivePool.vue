@@ -54,6 +54,25 @@ const recommendedFakes = computed(() =>
 function selectLive(id: string) {
   store.setSelectedLive(id)
 }
+
+// Drag & Drop
+const dragOverLiveId = ref<string | null>(null)
+
+function onDragOver(liveId: string) {
+  dragOverLiveId.value = liveId
+}
+
+function onDragLeave() {
+  dragOverLiveId.value = null
+}
+
+function onDrop(e: DragEvent, liveId: string) {
+  dragOverLiveId.value = null
+  const segmentId = e.dataTransfer?.getData('segmentId')
+  if (!segmentId) return
+  store.assignAudience(liveId, segmentId)
+  store.recordAdjustment(liveId, segmentId)
+}
 </script>
 
 <template>
@@ -75,8 +94,14 @@ function selectLive(id: string) {
         v-for="live in store.liveStreams"
         :key="live.id"
         class="border rounded p-3 hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer relative"
-        :class="store.selectedLiveId === live.id ? 'border-blue-400 bg-blue-50/30' : 'border-slate-200 bg-white'"
+        :class="[
+          store.selectedLiveId === live.id ? 'border-blue-400 bg-blue-50/30' : 'border-slate-200 bg-white',
+          dragOverLiveId === live.id ? 'ring-2 ring-blue-400 ring-offset-2' : ''
+        ]"
         @click="selectLive(live.id)"
+        @dragover.prevent="onDragOver(live.id)"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop($event, live.id)"
       >
         <div class="flex justify-between items-start mb-2">
           <div class="flex items-center gap-1.5">

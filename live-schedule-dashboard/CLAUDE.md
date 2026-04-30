@@ -6,10 +6,11 @@
 
 1. 上传排期 Excel → 系统解析出本周直播场次
 2. 上传 audience 量级表 → 系统获得各品类各时间段的存量用户数
-3. 上传跨科偏好数据 → 系统获得品类→品类的 day60 跨科率 + LTV
+3. 上传跨科偏好数据 → 系统获得品类→品类的 day60 跨科率 + LTV（含 cohortMonth）
 4. 系统自动按规则分配 audience（自动排期）
 5. 运营可在看板上手动校准品类、线级、评级、人群分配
-6. 导出排期结果回 Excel
+6. **拖拽调整后系统记录规则，下次自动应用**
+7. 导出排期结果回 Excel
 
 ## 技术栈
 
@@ -25,21 +26,22 @@
 ```
 src/
   components/
-    UploadBar.vue        — 顶部工具栏（上传、自动排期、导出、归因入口）
-    UploadModal.vue      — 上传文件弹窗（排期表 / audience表 / 跨科偏好表）
-    WeekBoard.vue        — 周排期矩阵看板（周一至周日 × 各时段）
-    LivePool.vue         — 直播卡片列表（可编辑品类/线级/评级）
-    DetailPanel.vue      — 右侧详情面板（已分配 audience + 人群库存 + 归因数据）
-    CategoryManager.vue  — 品类评级管理弹窗
-    AttributionPanel.vue — 全局排期归因看板弹窗
+    UploadBar.vue                — 顶部工具栏（上传、自动排期、导出、归因入口）
+    UploadModal.vue              — 上传文件弹窗（排期表 / audience表 / 跨科偏好表）
+    LivePool.vue                 — 直播卡片列表（可编辑品类/线级/评级，支持接收拖拽）
+    DetailPanel.vue              — 右侧详情面板（已分配 audience + 人群库存 + 归因数据，支持拖拽转移）
+    CategoryManager.vue          — 品类评级管理弹窗
+    AttributionPanel.vue         — 全局排期归因看板弹窗
+    GlobalAudiencePanel.vue      — 左侧全局人群面板（智能推荐 + 按 cohortMonth 展开的库存树）
+    AdjustmentFeedbackModal.vue  — 拖拽调整后的自然语言反馈弹窗（记录规则）
   stores/
-    schedule.ts          — 核心 Pinia store（状态、计算属性、actions、autoSchedule）
+    schedule.ts                  — 核心 Pinia store（状态、计算属性、actions、autoSchedule）
   utils/
-    parser.ts            — Excel 解析（排期矩阵、audience sheet、跨科偏好、历史记录）
-    exporter.ts          — Excel 导出
-    categoryMapping.ts   — 标准品类映射 + normalizeCategory 函数
+    parser.ts                    — Excel 解析（排期矩阵、audience sheet、跨科偏好、历史记录）
+    exporter.ts                  — Excel 导出
+    categoryMapping.ts           — 标准品类映射 + normalizeCategory 函数
   types/
-    index.ts             — TypeScript 类型定义
+    index.ts                     — TypeScript 类型定义
 ```
 
 ## 核心数据模型
@@ -83,11 +85,13 @@ interface AudienceSegment {
 
 ```typescript
 interface CrossCategoryPref {
-  fromCategory: string   // 直播品类
-  toCategory: string     // 宣发目标品类（audience 品类）
+  fromCategory: string   // 公海品类（audience 品类）
+  toCategory: string     // 跨科品类（直播品类）
   toLine: LineType
-  crossRate: number      // day60 跨科率
-  ltv: number            // day60 LTV（GMV/例子数）
+  cohortMonth: string    // 转继承添加好友月份，如 "2026-03"
+  crossRate: number      // day60 跨科率（直播间优先，fallback 导量）
+  conversionRate: number // 首单转化率（直播间优先，fallback 导量）
+  ltv: number            // day60 LTV（直播间优先，fallback 导量）
 }
 ```
 
@@ -113,26 +117,53 @@ interface CrossCategoryPref {
 ## AutoSchedule 策略
 
 1. 按直播权重排序：`S(100) > A(70) > B(40) > C(20)`，晚间场加分，伪直播历史转化率加分
-2. 同线分配，优先同品类族（垂类），再按 LTV 排序，最后按 count 排序
-3. 每个直播分配 audience 直到达到目标曝光量（S:45w, A:30w, B:20w, C:15w）
-4. 检查所有硬规则冲突
+2. 同线分配，优先同品类族（垂类）
+3. **cohort-aware 排序**：在候选人群中，先按 `cohortMonth` 精确匹配 crossRate/LTV，找不到则 fallback 全量平均
+4. 同品类族内按预估GMV（crossRate × LTV）从高到低排序，最后按 count 排序
+5. 每个直播分配 audience 直到达到目标曝光量（S:45w, A:30w, B:20w, C:15w）
+6. 检查所有硬规则冲突
 
-## 归因计算
+## 归因计算（cohort-aware）
 
 对每个直播的 `assignedAudiences`：
 
 ```
-expectedConversion = Σ(audience.count × crossRate)
-expectedGMV = Σ(audience.count × crossRate × ltv)
+expectedLeads = Σ(audience.count × crossRate)
+expectedFirstOrders = Σ(expectedLeads × conversionRate)
+expectedGMV = Σ(expectedFirstOrders × ltv)
 ```
 
-匹配条件：`normalizeCategory(crossPref.fromCategory) === normalizeCategory(live.category) && normalizeCategory(crossPref.toCategory) === normalizeCategory(aud.category)`
+**匹配优先级**：
+1. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat && cohortMonth === extractCohortMonth(aud.timeRange)`（精确匹配）
+2. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat`（全量平均 fallback）
+3. 默认 zero
+
+## 人工调适与规则学习
+
+### 拖拽调整
+- **左侧库存树 → 中间直播卡片**：点击或拖拽分配
+- **右侧已分配 audience → 中间直播卡片**：自动转移（先 remove 再 assign）
+- 悬停时直播卡片高亮，释放后执行分配
+
+### 智能推荐
+选中直播后，左侧「智能推荐」区显示所有可宣发人群，按 `预估GMV = 库存 × crossRate × LTV` 降序排列：
+- 同品类族（垂类）高亮
+- 显示 cohortMonth、crossRate、LTV
+- 无直播间数据时 fallback 导量，标灰提示
+
+### 规则学习
+拖拽/点击分配后弹出 `AdjustmentFeedbackModal`：
+- 显示调整前后的 GMV 对比
+- 自然语言输入框（如"中医变美跨科率太低，瑜伽更匹配"）
+- 点击「确认并记录」存入 `learnedRules`（localStorage）
+- 下次 `autoSchedule` 时可扫描规则调整排序权重
 
 ## 持久化
 
 - `schedule.categoryGrades` — 品类手动评级 (localStorage)
 - `schedule.categoryLines` — 品类线级覆盖 (localStorage)
 - `schedule.nameOverrides` — 按直播名记忆的品类/线级 (localStorage)
+- `schedule.learnedRules` — 人工调整沉淀的规则 (localStorage / cloud sync)
 
 ## 开发命令
 
@@ -149,3 +180,4 @@ npm run preview  # 预览构建产物
 - 品类名必须走 `normalizeCategory` 规范化后再做匹配，否则归因会全是0
 - 修改品类映射后需要重新上传数据或点击「应用到所有场次」+「重新生成排期」
 - 构建输出在 `dist/` 目录，可部署到任何静态托管服务
+- **跨科偏好文件格式**：必须包含 `转继承添加好友月份` 列作为第0列，系统按此列提取 `cohortMonth`

@@ -530,28 +530,71 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   if (json.length < 2) return { crossPrefs, crossCategoryPrefs }
 
   const headers = json[0].map((h: any) => normCell(h))
-  // Data format: [month, fromCategory, toCategory, totalLeads, day60CrossLeads, firstOrderCount, firstOrderGMV, crossRate, conversionRate, LTV, ...]
+  // Data format: [cohortMonth, fromCategory, toCategory, totalLeads, day60CrossLeads, firstOrderCount, firstOrderGMV, crossRate, conversionRate, LTV, ...]
   const fromIdx = 1
   const toIdx = 2
-  const rateIdx = headers.findIndex(h => h.includes('跨科率_导量') || h.includes('跨科率'))
-  let convIdx = headers.findIndex(h => h.includes('转化率_直播间'))
-  if (convIdx === -1) {
-    convIdx = headers.findIndex(h => h.includes('转化率_导量') || h.includes('转化率'))
+
+  // Find column indices for live vs guide data
+  const crossRateLiveIdx = headers.findIndex(h => h.includes('跨科率_直播间'))
+  const crossRateGuideIdx = headers.findIndex(h => h.includes('跨科率_导量'))
+  const crossRateGeneralIdx = headers.findIndex(h => h.includes('跨科率'))
+
+  const convRateLiveIdx = headers.findIndex(h => h.includes('转化率_直播间'))
+  const convRateGuideIdx = headers.findIndex(h => h.includes('转化率_导量'))
+  const convRateGeneralIdx = headers.findIndex(h => h.includes('转化率'))
+
+  const ltvLiveIdx = headers.findIndex(h => h.includes('LTV_直播间'))
+  const ltvGuideIdx = headers.findIndex(h => h.includes('LTV_导量'))
+  const ltvGeneralIdx = headers.findIndex(h => h.includes('LTV'))
+
+  function getNumberValue(row: any[], liveIdx: number, guideIdx: number, generalIdx: number): number {
+    if (liveIdx >= 0) {
+      const val = Number(row[liveIdx] || 0)
+      if (!isNaN(val) && val > 0) return val
+    }
+    if (guideIdx >= 0) {
+      const val = Number(row[guideIdx] || 0)
+      if (!isNaN(val) && val > 0) return val
+    }
+    if (generalIdx >= 0) {
+      const val = Number(row[generalIdx] || 0)
+      if (!isNaN(val)) return val
+    }
+    return 0
   }
-  const ltvIdx = headers.findIndex(h => h.includes('LTV_导量') || h.includes('LTV'))
+
+  function getLtvValue(row: any[], liveIdx: number, guideIdx: number, generalIdx: number): number {
+    if (liveIdx >= 0) {
+      const val = row[liveIdx]
+      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      if (!isNaN(num) && num > 0) return num
+    }
+    if (guideIdx >= 0) {
+      const val = row[guideIdx]
+      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      if (!isNaN(num) && num > 0) return num
+    }
+    if (generalIdx >= 0) {
+      const val = row[generalIdx]
+      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      if (!isNaN(num)) return num
+    }
+    return 0
+  }
 
   for (let i = 1; i < json.length; i++) {
     const row = json[i]
     if (!row) continue
 
+    const cohortMonth = normCell(row[0])
     const rawFrom = normCell(row[fromIdx])
     const rawTo = normCell(row[toIdx])
-    const rate = Number(row[rateIdx >= 0 ? rateIdx : 7] || 0)
-    const convRate = Number(row[convIdx >= 0 ? convIdx : 8] || 0)
-    const ltvVal = row[ltvIdx >= 0 ? ltvIdx : 9]
-    const ltv = ltvVal === '' || ltvVal === undefined ? 0 : Number(ltvVal)
 
     if (!rawFrom || !rawTo) continue
+
+    const crossRate = getNumberValue(row, crossRateLiveIdx, crossRateGuideIdx, crossRateGeneralIdx)
+    const convRate = getNumberValue(row, convRateLiveIdx, convRateGuideIdx, convRateGeneralIdx)
+    const ltv = getLtvValue(row, ltvLiveIdx, ltvGuideIdx, ltvGeneralIdx)
 
     const fromCategory = normalizeCategory(rawFrom)
     const toCategory = normalizeCategory(rawTo)
@@ -560,20 +603,21 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
       fromCategory,
       toCategory,
       toLine: parseLine(toCategory),
-      crossRate: isNaN(rate) ? 0 : rate,
+      cohortMonth: cohortMonth || 'unknown',
+      crossRate: isNaN(crossRate) ? 0 : crossRate,
       conversionRate: isNaN(convRate) ? 0 : convRate,
       ltv: isNaN(ltv) ? 0 : ltv,
     })
 
-    // Update legacy CrossPref with actual rate
+    // Update legacy CrossPref with actual rate (use max across cohorts)
     const existing = crossPrefs.find(p => p.fromCategory === fromCategory && p.toLine === parseLine(toCategory))
     if (existing) {
-      existing.rate = Math.max(existing.rate, isNaN(rate) ? 0 : rate)
+      existing.rate = Math.max(existing.rate, crossRate)
     } else {
       crossPrefs.push({
         fromCategory,
         toLine: parseLine(toCategory),
-        rate: isNaN(rate) ? 0 : rate,
+        rate: crossRate,
       })
     }
   }

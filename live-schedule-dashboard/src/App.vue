@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import UploadBar from './components/UploadBar.vue'
+import GlobalAudiencePanel from './components/GlobalAudiencePanel.vue'
 import LivePool from './components/LivePool.vue'
-import WeekBoard from './components/WeekBoard.vue'
 import DetailPanel from './components/DetailPanel.vue'
+import AdjustmentFeedbackModal from './components/AdjustmentFeedbackModal.vue'
 import { useScheduleStore } from './stores/schedule'
 
 const store = useScheduleStore()
@@ -17,9 +18,10 @@ onMounted(() => {
   <div class="h-screen flex flex-col overflow-hidden bg-[#f8f9ff]">
     <UploadBar />
     <div class="flex flex-1 overflow-hidden">
+      <GlobalAudiencePanel />
       <LivePool />
-      <WeekBoard />
       <DetailPanel />
     </div>
+    <AdjustmentFeedbackModal />
   </div>
 </template>

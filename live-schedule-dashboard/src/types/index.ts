@@ -61,6 +61,7 @@ export interface CrossCategoryPref {
   fromCategory: string
   toCategory: string
   toLine: LineType
+  cohortMonth: string
   crossRate: number
   conversionRate: number
   ltv: number

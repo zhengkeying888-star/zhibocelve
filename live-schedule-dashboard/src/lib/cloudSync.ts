@@ -23,6 +23,14 @@ export interface ScheduleState {
   categoryGrades: Record<string, GradeType>
   categoryLines: Record<string, LineType>
   nameOverrides: Record<string, { category: string; line: LineType }>
+  learnedRules?: Array<{
+    id: string
+    liveCategory: string
+    fromCategory: string
+    toCategory: string
+    reason: string
+    timestamp: number
+  }>
 }
 
 const SCHEDULE_ID_KEY = 'schedule.currentId'

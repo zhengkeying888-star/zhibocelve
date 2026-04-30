@@ -64,6 +64,13 @@ function removeAudience(segmentId: string) {
   store.removeAudience(selectedLive.value.id, segmentId)
 }
 
+function onDragStart(e: DragEvent, segmentId: string) {
+  if (e.dataTransfer) {
+    e.dataTransfer.setData('segmentId', segmentId)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+}
+
 function getAudienceByLine(line: LineType) {
   return selectedLive.value?.assignedAudiences.filter((a) => a.line === line) || []
 }
@@ -247,8 +254,10 @@ function getAttributionForAudience(segmentId: string) {
             <div
               v-for="aud in getAudienceByLine(line)"
               :key="aud.segmentId"
-              class="p-2 border rounded hover:border-slate-300 mb-1"
+              class="p-2 border rounded hover:border-slate-300 mb-1 cursor-move"
               :class="selectedLive.conflictReasons.some(r => r.includes(aud.category)) ? 'bg-red-50/30 border-red-200' : 'border-slate-200'"
+              draggable="true"
+              @dragstart="onDragStart($event, aud.segmentId)"
             >
               <div class="flex items-center justify-between mb-1">
                 <div class="flex items-center gap-2">

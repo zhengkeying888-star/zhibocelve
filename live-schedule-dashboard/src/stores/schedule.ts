@@ -64,6 +64,18 @@ export const useScheduleStore = defineStore('schedule', () => {
   const categoryLines = ref<Record<string, LineType>>({ ...DEFAULT_CATEGORY_LINES })
   const nameOverrides = ref<Record<string, { category: string; line: LineType }>>({})
 
+  // Learned rules from manual adjustments
+  interface LearnedRule {
+    id: string
+    liveCategory: string
+    fromCategory: string
+    toCategory: string
+    reason: string
+    timestamp: number
+  }
+  const learnedRules = ref<LearnedRule[]>([])
+  const pendingAdjustment = ref<{ liveId: string; segmentId: string; fromLiveId?: string } | null>(null)
+
   // ========== Cloud Sync ==========
   let isLoadingFromCloud = false
 
@@ -80,10 +92,12 @@ export const useScheduleStore = defineStore('schedule', () => {
       categoryGrades: categoryGrades.value,
       categoryLines: categoryLines.value,
       nameOverrides: nameOverrides.value,
+      learnedRules: learnedRules.value,
     }
   }
 
   function deserializeState(state: ScheduleState) {
+    if (state.learnedRules) learnedRules.value = state.learnedRules
     if (state.currentWeek) currentWeek.value = state.currentWeek
     if (state.weekDays) weekDays.value = state.weekDays
     if (state.liveStreams) liveStreams.value = state.liveStreams
@@ -178,10 +192,17 @@ export const useScheduleStore = defineStore('schedule', () => {
       let expectedGMV = 0
       for (const aud of live.assignedAudiences) {
         const audCat = normalizeCategory(aud.category)
+        const audCohort = extractCohortMonth(aud.timeRange)
         // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
-        const pref = crossCategoryPrefs.value.find(
-          (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
+        // 优先按 cohortMonth 精确匹配，再 fallback 到全量平均
+        let pref = crossCategoryPrefs.value.find(
+          (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat && p.cohortMonth === audCohort
         )
+        if (!pref) {
+          pref = crossCategoryPrefs.value.find(
+            (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
+          )
+        }
         const crossRate = pref?.crossRate || 0
         const conversionRate = pref?.conversionRate || 0
         const ltv = live.ltv || 80
@@ -223,6 +244,21 @@ export const useScheduleStore = defineStore('schedule', () => {
   // ========== Helpers ==========
   function generateId() {
     return Math.random().toString(36).substring(2, 10)
+  }
+
+  function extractCohortMonth(timeRange: string): string | null {
+    // "2025.1.12-2026.4.26" -> "2026-04"
+    const parts = timeRange.split('-')
+    if (parts.length < 2) {
+      // Single part: try to extract month directly
+      const match = timeRange.match(/(\d{4})\.(\d{1,2})/)
+      if (!match) return null
+      return `${match[1]}-${match[2].padStart(2, '0')}`
+    }
+    const endPart = parts[parts.length - 1].trim()
+    const match = endPart.match(/(\d{4})\.(\d{1,2})/)
+    if (!match) return null
+    return `${match[1]}-${match[2].padStart(2, '0')}`
   }
 
   function parseDate(fullDate: string): Date {
@@ -346,6 +382,21 @@ export const useScheduleStore = defineStore('schedule', () => {
     const seg = audienceSegments.value.find((a) => a.id === segmentId)
     if (!live || !seg) return
 
+    // If already assigned to another live, remove it first (transfer)
+    if (seg.assignedTo && seg.assignedTo !== liveId) {
+      const fromLive = liveStreams.value.find((l) => l.id === seg.assignedTo)
+      if (fromLive) {
+        const idx = fromLive.assignedAudiences.findIndex((a) => a.segmentId === segmentId)
+        if (idx !== -1) {
+          const assigned = fromLive.assignedAudiences[idx]
+          fromLive.exposure -= assigned.count
+          fromLive.assignedAudiences.splice(idx, 1)
+        }
+      }
+      seg.status = 'available'
+      seg.assignedTo = undefined
+    }
+
     // Enforce same-line rule
     if (seg.line !== live.line) {
       console.warn('Cross-line assignment blocked:', seg.line, '->', live.line)
@@ -392,6 +443,28 @@ export const useScheduleStore = defineStore('schedule', () => {
       seg.assignedTo = undefined
     }
     recalcConflicts(live)
+  }
+
+  function recordAdjustment(liveId: string, segmentId: string) {
+    const seg = audienceSegments.value.find((a) => a.id === segmentId)
+    pendingAdjustment.value = {
+      liveId,
+      segmentId,
+      fromLiveId: seg?.assignedTo,
+    }
+  }
+
+  function saveLearnedRule(rule: Omit<LearnedRule, 'id' | 'timestamp'>) {
+    learnedRules.value.push({
+      id: generateId(),
+      ...rule,
+      timestamp: Date.now(),
+    })
+    pendingAdjustment.value = null
+  }
+
+  function dismissAdjustment() {
+    pendingAdjustment.value = null
   }
 
   function checkConflicts(live: LiveStream, seg: AudienceSegment): string[] {
@@ -459,14 +532,35 @@ export const useScheduleStore = defineStore('schedule', () => {
       seg.assignedTo = undefined
     }
 
-    // Build a fast lookup map for cross-category prefs so the sort comparator
-    // doesn't do an O(n) .find() inside an O(n log n) sort.
-    const crossPrefMap = new Map<string, { crossRate: number; ltv: number }>()
+    // Build fast lookup maps for cross-category prefs.
+    // cohortPrefMap: key = cohortMonth|fromCategory|toCategory (exact match)
+    // avgPrefMap: key = fromCategory|toCategory (fallback average)
+    const cohortPrefMap = new Map<string, { crossRate: number; ltv: number }>()
+    const avgPrefMap = new Map<string, { crossRate: number; ltv: number }>()
     for (const p of crossCategoryPrefs.value) {
-      const key = `${normalizeCategory(p.fromCategory)}|${normalizeCategory(p.toCategory)}`
-      if (!crossPrefMap.has(key)) {
-        crossPrefMap.set(key, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
+      const fromCat = normalizeCategory(p.fromCategory)
+      const toCat = normalizeCategory(p.toCategory)
+      const avgKey = `${fromCat}|${toCat}`
+      if (!avgPrefMap.has(avgKey)) {
+        avgPrefMap.set(avgKey, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
       }
+      if (p.cohortMonth && p.cohortMonth !== 'unknown') {
+        const cohortKey = `${p.cohortMonth}|${fromCat}|${toCat}`
+        if (!cohortPrefMap.has(cohortKey)) {
+          cohortPrefMap.set(cohortKey, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
+        }
+      }
+    }
+
+    function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; ltv: number } {
+      const cohortMonth = extractCohortMonth(timeRange)
+      if (cohortMonth) {
+        const cohortKey = `${cohortMonth}|${normalizeCategory(audienceCat)}|${normalizeCategory(liveCat)}`
+        const cohortPref = cohortPrefMap.get(cohortKey)
+        if (cohortPref) return cohortPref
+      }
+      const avgKey = `${normalizeCategory(audienceCat)}|${normalizeCategory(liveCat)}`
+      return avgPrefMap.get(avgKey) || { crossRate: 0, ltv: 0 }
     }
 
     // Score and sort (skip friend-circle)
@@ -527,13 +621,13 @@ export const useScheduleStore = defineStore('schedule', () => {
         // 同品类互斥：任何直播都不能宣发同品类的 audience
         .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
         .sort((a, b) => {
-          const aPref = crossPrefMap.get(`${normalizeCategory(a.category)}|${liveCat}`)
-          const bPref = crossPrefMap.get(`${normalizeCategory(b.category)}|${liveCat}`)
-          const aRate = aPref?.crossRate || 0
-          const bRate = bPref?.crossRate || 0
+          const aPref = getCrossPref(a.category, live.category, a.timeRange)
+          const bPref = getCrossPref(b.category, live.category, b.timeRange)
+          const aRate = aPref.crossRate || 0
+          const bRate = bPref.crossRate || 0
           if (bRate !== aRate) return bRate - aRate
-          const aLTV = aPref?.ltv || 0
-          const bLTV = bPref?.ltv || 0
+          const aLTV = aPref.ltv || 0
+          const bLTV = bPref.ltv || 0
           if (bLTV !== aLTV) return bLTV - aLTV
           return b.count - a.count
         })
@@ -670,27 +764,32 @@ export const useScheduleStore = defineStore('schedule', () => {
     // Mock cross-prefs
     const mockCrossPrefs: CrossPref[] = []
     const mockCrossCategoryPrefs: CrossCategoryPref[] = []
+    const mockCohortMonths = ['2026-01', '2026-02', '2026-03']
     for (const c of categories) {
       for (const c2 of categories) {
         if (c.cat === c2.cat) continue
-        const rate = Math.random() * 0.5
-        mockCrossCategoryPrefs.push({
-          fromCategory: c.cat,
-          toCategory: c2.cat,
-          toLine: c2.line,
-          crossRate: rate,
-          conversionRate: Math.random() * 0.2,
-          ltv: Math.floor(Math.random() * 300) + 50,
-        })
-        const existing = mockCrossPrefs.find(p => p.fromCategory === c.cat && p.toLine === c2.line)
-        if (existing) {
-          existing.rate = Math.max(existing.rate, rate)
-        } else {
-          mockCrossPrefs.push({
+        // Generate one entry per cohort month for realistic mock data
+        for (const cm of mockCohortMonths) {
+          const rate = Math.random() * 0.5
+          mockCrossCategoryPrefs.push({
             fromCategory: c.cat,
+            toCategory: c2.cat,
             toLine: c2.line,
-            rate,
+            cohortMonth: cm,
+            crossRate: rate,
+            conversionRate: Math.random() * 0.2,
+            ltv: Math.floor(Math.random() * 300) + 50,
           })
+          const existing = mockCrossPrefs.find(p => p.fromCategory === c.cat && p.toLine === c2.line)
+          if (existing) {
+            existing.rate = Math.max(existing.rate, rate)
+          } else {
+            mockCrossPrefs.push({
+              fromCategory: c.cat,
+              toLine: c2.line,
+              rate,
+            })
+          }
         }
       }
     }
@@ -753,7 +852,12 @@ export const useScheduleStore = defineStore('schedule', () => {
     applyNameOverrides,
     assignAudience,
     removeAudience,
+    recordAdjustment,
+    saveLearnedRule,
+    dismissAdjustment,
     autoSchedule,
     loadMockData,
+    learnedRules,
+    pendingAdjustment,
   }
 })
