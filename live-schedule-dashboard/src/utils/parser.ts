@@ -887,25 +887,18 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
     }
   }
 
-  let currentLine: LineType = 'health'
-
   for (let r = headerRowIdx + 1; r < json.length; r++) {
     const row = json[r]
     if (!row || row.length < 3) continue
 
-    const lineStr = normCell(row[0])
     const rawCategory = normCell(row[1])
     if (!rawCategory) continue
 
-    if (lineStr) {
-      currentLine = parseLine(lineStr)
-    } else {
-      // Fallback: infer line from category name so empty cells don't inherit the wrong line
-      currentLine = parseLineFromCategory(rawCategory)
-    }
-
+    // Always infer line from the canonical category name.
+    // We intentionally ignore the Excel "线" column because it is often empty
+    // or copy-pasted incorrectly, which causes cross-line contamination.
     const category = normalizeCategory(rawCategory)
-    const lineType = currentLine
+    const lineType = parseLineFromCategory(category)
 
     for (let g = 0; g < timeIndices.length; g++) {
       const ti = timeIndices[g]
