@@ -30,7 +30,8 @@ const totals = computed(() => {
   const list = filteredAttribution.value
   return {
     exposure: list.reduce((s, a) => s + a.totalExposure, 0),
-    conversion: list.reduce((s, a) => s + a.expectedConversion, 0),
+    leads: list.reduce((s, a) => s + a.expectedLeads, 0),
+    firstOrders: list.reduce((s, a) => s + a.expectedFirstOrders, 0),
     gmv: list.reduce((s, a) => s + a.expectedGMV, 0),
   }
 })
@@ -100,7 +101,8 @@ function selectLive(id: string) {
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase">品类</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase">线</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">触达人数</th>
-                  <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计转化</th>
+                  <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计线索</th>
+                  <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计首单</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计GMV</th>
                 </tr>
               </thead>
@@ -138,7 +140,10 @@ function selectLive(id: string) {
                     {{ (att.totalExposure / 10000).toFixed(1) }}w
                   </td>
                   <td class="py-2.5 text-right font-mono text-blue-700">
-                    {{ (att.expectedConversion / 10000).toFixed(1) }}w
+                    {{ (att.expectedLeads / 10000).toFixed(1) }}w
+                  </td>
+                  <td class="py-2.5 text-right font-mono text-indigo-700">
+                    {{ (att.expectedFirstOrders / 10000).toFixed(1) }}w
                   </td>
                   <td class="py-2.5 text-right font-mono text-emerald-700">
                     ¥{{ (att.expectedGMV / 10000).toFixed(1) }}w
@@ -159,8 +164,12 @@ function selectLive(id: string) {
                 <div class="text-sm font-mono font-bold text-slate-800">{{ (totals.exposure / 10000).toFixed(1) }}w</div>
               </div>
               <div class="text-center">
-                <div class="text-[10px] text-slate-500">总预计转化</div>
-                <div class="text-sm font-mono font-bold text-blue-700">{{ (totals.conversion / 10000).toFixed(1) }}w</div>
+                <div class="text-[10px] text-slate-500">总预计线索</div>
+                <div class="text-sm font-mono font-bold text-blue-700">{{ (totals.leads / 10000).toFixed(1) }}w</div>
+              </div>
+              <div class="text-center">
+                <div class="text-[10px] text-slate-500">总预计首单</div>
+                <div class="text-sm font-mono font-bold text-indigo-700">{{ (totals.firstOrders / 10000).toFixed(1) }}w</div>
               </div>
               <div class="text-center">
                 <div class="text-[10px] text-slate-500">总预计GMV</div>

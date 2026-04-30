@@ -173,7 +173,8 @@ export const useScheduleStore = defineStore('schedule', () => {
       const liveCat = normalizeCategory(live.category)
       const items: AttributionItem[] = []
       let totalExposure = 0
-      let expectedConversion = 0
+      let expectedLeads = 0
+      let expectedFirstOrders = 0
       let expectedGMV = 0
       for (const aud of live.assignedAudiences) {
         const audCat = normalizeCategory(aud.category)
@@ -182,21 +183,26 @@ export const useScheduleStore = defineStore('schedule', () => {
           (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
         )
         const crossRate = pref?.crossRate || 0
+        const conversionRate = pref?.conversionRate || 0
         const ltv = live.ltv || 80
-        const conv = aud.count * crossRate
-        const gmv = conv * ltv
+        const leads = aud.count * crossRate
+        const firstOrders = leads * conversionRate
+        const gmv = firstOrders * ltv
         items.push({
           segmentId: aud.segmentId,
           category: aud.category,
           line: aud.line,
           count: aud.count,
           crossRate,
+          conversionRate,
           ltv,
-          expectedConversion: conv,
+          expectedLeads: leads,
+          expectedFirstOrders: firstOrders,
           expectedGMV: gmv,
         })
         totalExposure += aud.count
-        expectedConversion += conv
+        expectedLeads += leads
+        expectedFirstOrders += firstOrders
         expectedGMV += gmv
       }
       result.push({
@@ -205,7 +211,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         category: live.category,
         line: live.line,
         totalExposure,
-        expectedConversion,
+        expectedLeads,
+        expectedFirstOrders,
         expectedGMV,
         items,
       })
@@ -672,6 +679,7 @@ export const useScheduleStore = defineStore('schedule', () => {
           toCategory: c2.cat,
           toLine: c2.line,
           crossRate: rate,
+          conversionRate: Math.random() * 0.2,
           ltv: Math.floor(Math.random() * 300) + 50,
         })
         const existing = mockCrossPrefs.find(p => p.fromCategory === c.cat && p.toLine === c2.line)

@@ -534,6 +534,10 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   const fromIdx = 1
   const toIdx = 2
   const rateIdx = headers.findIndex(h => h.includes('跨科率_导量') || h.includes('跨科率'))
+  let convIdx = headers.findIndex(h => h.includes('转化率_直播间'))
+  if (convIdx === -1) {
+    convIdx = headers.findIndex(h => h.includes('转化率_导量') || h.includes('转化率'))
+  }
   const ltvIdx = headers.findIndex(h => h.includes('LTV_导量') || h.includes('LTV'))
 
   for (let i = 1; i < json.length; i++) {
@@ -543,6 +547,7 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
     const rawFrom = normCell(row[fromIdx])
     const rawTo = normCell(row[toIdx])
     const rate = Number(row[rateIdx >= 0 ? rateIdx : 7] || 0)
+    const convRate = Number(row[convIdx >= 0 ? convIdx : 8] || 0)
     const ltvVal = row[ltvIdx >= 0 ? ltvIdx : 9]
     const ltv = ltvVal === '' || ltvVal === undefined ? 0 : Number(ltvVal)
 
@@ -556,6 +561,7 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
       toCategory,
       toLine: parseLine(toCategory),
       crossRate: isNaN(rate) ? 0 : rate,
+      conversionRate: isNaN(convRate) ? 0 : convRate,
       ltv: isNaN(ltv) ? 0 : ltv,
     })
 

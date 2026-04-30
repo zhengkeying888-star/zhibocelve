@@ -265,13 +265,17 @@ function getAttributionForAudience(segmentId: string) {
               <!-- Attribution mini row -->
               <div
                 v-if="getAttributionForAudience(aud.segmentId)"
-                class="flex items-center gap-2 text-[10px] text-slate-500 pl-3"
+                class="flex items-center gap-2 text-[10px] text-slate-500 pl-3 flex-wrap"
               >
                 <span class="text-amber-600">跨科率 {{ (getAttributionForAudience(aud.segmentId)!.crossRate * 100).toFixed(1) }}%</span>
                 <span class="text-slate-300">|</span>
+                <span class="text-rose-600">首单转化 {{ (getAttributionForAudience(aud.segmentId)!.conversionRate * 100).toFixed(1) }}%</span>
+                <span class="text-slate-300">|</span>
                 <span class="text-emerald-600">LTV ¥{{ getAttributionForAudience(aud.segmentId)!.ltv.toLocaleString() }}</span>
                 <span class="text-slate-300">|</span>
-                <span class="text-blue-600">预计转化 {{ (getAttributionForAudience(aud.segmentId)!.expectedConversion / 10000).toFixed(1) }}w</span>
+                <span class="text-blue-600">预计线索 {{ (getAttributionForAudience(aud.segmentId)!.expectedLeads / 10000).toFixed(1) }}w</span>
+                <span class="text-slate-300">|</span>
+                <span class="text-indigo-600">预计首单 {{ (getAttributionForAudience(aud.segmentId)!.expectedFirstOrders / 10000).toFixed(1) }}w</span>
                 <span class="text-slate-300">|</span>
                 <span class="text-purple-600">预计GMV ¥{{ (getAttributionForAudience(aud.segmentId)!.expectedGMV / 10000).toFixed(1) }}w</span>
               </div>
@@ -285,14 +289,18 @@ function getAttributionForAudience(segmentId: string) {
         <!-- Attribution Summary -->
         <div v-if="selectedAttribution" class="bg-slate-50 border border-slate-200 rounded p-3 mb-4">
           <div class="text-[10px] font-semibold text-slate-500 uppercase mb-2">排期归因</div>
-          <div class="grid grid-cols-3 gap-2">
+          <div class="grid grid-cols-4 gap-2">
             <div class="text-center">
               <div class="text-xs text-slate-500">总触达</div>
               <div class="text-sm font-mono font-bold text-slate-800">{{ (selectedAttribution.totalExposure / 10000).toFixed(1) }}w</div>
             </div>
             <div class="text-center">
-              <div class="text-xs text-slate-500">预计转化</div>
-              <div class="text-sm font-mono font-bold text-blue-700">{{ (selectedAttribution.expectedConversion / 10000).toFixed(1) }}w</div>
+              <div class="text-xs text-slate-500">预计线索</div>
+              <div class="text-sm font-mono font-bold text-blue-700">{{ (selectedAttribution.expectedLeads / 10000).toFixed(1) }}w</div>
+            </div>
+            <div class="text-center">
+              <div class="text-xs text-slate-500">预计首单</div>
+              <div class="text-sm font-mono font-bold text-indigo-700">{{ (selectedAttribution.expectedFirstOrders / 10000).toFixed(1) }}w</div>
             </div>
             <div class="text-center">
               <div class="text-xs text-slate-500">预计GMV</div>

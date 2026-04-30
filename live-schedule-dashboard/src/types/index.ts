@@ -62,6 +62,7 @@ export interface CrossCategoryPref {
   toCategory: string
   toLine: LineType
   crossRate: number
+  conversionRate: number
   ltv: number
 }
 
@@ -88,8 +89,10 @@ export interface AttributionItem {
   line: LineType
   count: number
   crossRate: number
+  conversionRate: number
   ltv: number
-  expectedConversion: number
+  expectedLeads: number
+  expectedFirstOrders: number
   expectedGMV: number
 }
 
@@ -99,7 +102,8 @@ export interface LiveAttribution {
   category: string
   line: LineType
   totalExposure: number
-  expectedConversion: number
+  expectedLeads: number
+  expectedFirstOrders: number
   expectedGMV: number
   items: AttributionItem[]
 }
