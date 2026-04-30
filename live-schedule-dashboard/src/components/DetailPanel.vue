@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
-import type { LineType, AudienceSegment } from '@/types'
+import type { LineType } from '@/types'
 
 const store = useScheduleStore()
 
@@ -73,49 +73,6 @@ function onDragStart(e: DragEvent, segmentId: string) {
 
 function getAudienceByLine(line: LineType) {
   return selectedLive.value?.assignedAudiences.filter((a) => a.line === line) || []
-}
-
-function getPoolByLine(line: LineType) {
-  return store.audienceSegments.filter((s) => s.line === line)
-}
-
-interface MergedCategory {
-  category: string
-  line: LineType
-  totalCount: number
-  segments: typeof store.audienceSegments
-}
-
-const mergedPoolByLine = computed(() => {
-  const map = new Map<string, MergedCategory>()
-  for (const seg of store.audienceSegments) {
-    const key = `${seg.line}-${seg.category}`
-    if (!map.has(key)) {
-      map.set(key, { category: seg.category, line: seg.line, totalCount: 0, segments: [] })
-    }
-    const item = map.get(key)!
-    item.totalCount += seg.count
-    item.segments.push(seg)
-  }
-  const result: Record<string, MergedCategory[]> = { health: [], beauty: [], interest: [] }
-  for (const item of map.values()) {
-    result[item.line].push(item)
-  }
-  for (const line of Object.keys(result) as LineType[]) {
-    result[line].sort((a, b) => b.totalCount - a.totalCount)
-  }
-  return result
-})
-
-function getMergedStatus(segments: AudienceSegment[]): 'available' | 'used' | 'conflict' {
-  if (segments.every((s) => s.status === 'used')) return 'used'
-  if (segments.some((s) => s.status === 'available')) return 'available'
-  return 'conflict'
-}
-
-function quickAssign(segmentId: string) {
-  if (!selectedLive.value) return
-  store.assignAudience(selectedLive.value.id, segmentId)
 }
 
 function getAttributionForAudience(segmentId: string) {
@@ -327,69 +284,6 @@ function getAttributionForAudience(segmentId: string) {
           <button class="text-blue-600 font-bold text-xs hover:underline">采纳建议</button>
         </div>
       </template>
-    </div>
-
-    <!-- Bottom Tree List: User Volume -->
-    <div class="flex-1 overflow-y-auto p-4 bg-slate-50/50">
-      <h3 class="text-[11px] font-semibold tracking-wide text-slate-500 uppercase mb-3">全量人群库存</h3>
-      <div class="space-y-3">
-        <div v-for="line in (['health', 'beauty', 'interest'] as LineType[])" :key="line">
-          <div class="text-xs font-semibold text-slate-700 py-1 flex items-center gap-1">
-            <div class="w-1.5 h-1.5 rounded-full" :class="lineDotClass[line]"></div>
-            {{ lineLabel[line] }}
-            <span class="ml-auto font-mono text-[10px] text-slate-400">
-              {{ getPoolByLine(line).reduce((s, a) => s + a.count, 0).toLocaleString() }}
-            </span>
-          </div>
-          <div class="pl-4 space-y-1 border-l border-slate-200 ml-1.5 mt-1">
-            <div
-              v-for="item in mergedPoolByLine[line]"
-              :key="item.category"
-              class="group relative"
-            >
-              <!-- Merged Row -->
-              <div
-                class="flex items-center justify-between py-1.5 hover:bg-white rounded px-2 -ml-2 cursor-pointer"
-                @click="item.segments.find(s => s.status === 'available') ? quickAssign(item.segments.find(s => s.status === 'available')!.id) : null"
-              >
-                <span class="text-xs text-slate-600 truncate">{{ item.category }} · 多期存量</span>
-                <div class="flex items-center gap-2 shrink-0">
-                  <span
-                    v-if="getMergedStatus(item.segments) === 'used'"
-                    class="px-1 py-0.5 bg-slate-200 text-slate-600 rounded text-[9px] font-mono leading-none"
-                  >
-                    已排
-                  </span>
-                  <span class="text-xs font-mono" :class="getMergedStatus(item.segments) === 'used' ? 'text-slate-400' : 'text-slate-700 font-medium'">
-                    {{ (item.totalCount / 10000).toFixed(1) }}w
-                  </span>
-                </div>
-              </div>
-
-              <!-- Tooltip with original segments -->
-              <div
-                class="hidden group-hover:block absolute left-full top-0 ml-2 z-20 w-56 bg-white border border-slate-200 rounded shadow-lg p-2"
-              >
-                <div class="text-[10px] font-semibold text-slate-700 mb-1">{{ item.category }} 细分</div>
-                <div
-                  v-for="seg in item.segments"
-                  :key="seg.id"
-                  class="flex items-center justify-between py-0.5"
-                >
-                  <span class="text-[10px] text-slate-500">{{ seg.timeRange }}</span>
-                  <span class="text-[10px] font-mono" :class="seg.status === 'used' ? 'text-slate-400' : 'text-slate-700'">
-                    {{ (seg.count / 10000).toFixed(1) }}w
-                  </span>
-                </div>
-                <div class="mt-1 pt-1 border-t border-slate-100 flex justify-between">
-                  <span class="text-[10px] text-slate-500">合计</span>
-                  <span class="text-[10px] font-mono font-bold text-slate-800">{{ (item.totalCount / 10000).toFixed(1) }}w</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   </aside>
 </template>

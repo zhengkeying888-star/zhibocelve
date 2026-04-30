@@ -60,12 +60,13 @@ const recommendations = computed(() => {
     if (pref.toCategory !== liveCat) continue
     if (pref.toLine !== liveLine) continue
 
-    // Find matching audience segments (same fromCategory and line)
+    // Find matching audience segments (same fromCategory, line, and cohortMonth)
     const segs = store.audienceSegments.filter(
       (s) =>
         s.category === pref.fromCategory &&
         s.line === liveLine &&
-        s.status === 'available'
+        s.status === 'available' &&
+        extractCohortMonth(s.timeRange) === pref.cohortMonth
     )
     if (segs.length === 0) continue
 

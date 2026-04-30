@@ -2,7 +2,7 @@
 import { onMounted } from 'vue'
 import UploadBar from './components/UploadBar.vue'
 import GlobalAudiencePanel from './components/GlobalAudiencePanel.vue'
-import LivePool from './components/LivePool.vue'
+import WeekBoard from './components/WeekBoard.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import AdjustmentFeedbackModal from './components/AdjustmentFeedbackModal.vue'
 import { useScheduleStore } from './stores/schedule'
@@ -19,7 +19,7 @@ onMounted(() => {
     <UploadBar />
     <div class="flex flex-1 overflow-hidden">
       <GlobalAudiencePanel />
-      <LivePool />
+      <WeekBoard />
       <DetailPanel />
     </div>
     <AdjustmentFeedbackModal />
