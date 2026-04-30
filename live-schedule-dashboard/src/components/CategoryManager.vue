@@ -8,6 +8,7 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 
 const store = useScheduleStore()
 const autoReschedule = ref(true)
+const applying = ref(false)
 
 const categories = computed(() => {
   const list = store.uniqueCategories.map((cat) => ({
@@ -28,11 +29,14 @@ function setGrade(cat: string, grade: GradeType | '') {
 }
 
 async function applyAll() {
+  applying.value = true
   store.applyCategoryGrades()
   store.applyNameOverrides()
   if (autoReschedule.value && store.audienceSegments.length > 0) {
     await store.autoSchedule()
   }
+  applying.value = false
+  emit('close')
 }
 </script>
 
@@ -118,10 +122,12 @@ async function applyAll() {
                 关闭
               </button>
               <button
-                class="text-sm text-white bg-primary hover:bg-blue-700 px-5 py-2 rounded shadow-sm transition-colors"
+                class="text-sm text-white bg-primary hover:bg-blue-700 px-5 py-2 rounded shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                :disabled="applying"
                 @click="applyAll"
               >
-                应用到所有场次
+                <span v-if="applying">应用中...</span>
+                <span v-else>应用到所有场次</span>
               </button>
             </div>
           </div>

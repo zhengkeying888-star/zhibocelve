@@ -61,7 +61,13 @@ export async function loadScheduleState(): Promise<ScheduleState | null> {
 }
 
 export async function saveScheduleState(state: ScheduleState): Promise<void> {
-  if (!isSupabaseConfigured()) return
+  if (!isSupabaseConfigured()) {
+    // Fallback: persist config mappings locally so they survive reloads
+    localStorage.setItem('schedule.categoryGrades', JSON.stringify(state.categoryGrades))
+    localStorage.setItem('schedule.categoryLines', JSON.stringify(state.categoryLines))
+    localStorage.setItem('schedule.nameOverrides', JSON.stringify(state.nameOverrides))
+    return
+  }
 
   const scheduleId = getStoredScheduleId()
   const payload = {

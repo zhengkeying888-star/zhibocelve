@@ -19,6 +19,7 @@ import { normalizeCategory, isSameCategoryFamily } from '@/utils/categoryMapping
 import { validateSchedule } from '@/utils/scheduleValidator'
 import { loadScheduleState, saveScheduleState, subscribeToChanges } from '@/lib/cloudSync'
 import type { ScheduleState } from '@/lib/cloudSync'
+import { DEFAULT_CATEGORY_LINES, DEFAULT_CATEGORY_GRADES } from '@/lib/defaultCategoryMappings'
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -59,8 +60,8 @@ export const useScheduleStore = defineStore('schedule', () => {
   })
 
   // Category / line / grade mappings (persisted in cloud)
-  const categoryGrades = ref<Record<string, GradeType>>({})
-  const categoryLines = ref<Record<string, LineType>>({})
+  const categoryGrades = ref<Record<string, GradeType>>({ ...DEFAULT_CATEGORY_GRADES })
+  const categoryLines = ref<Record<string, LineType>>({ ...DEFAULT_CATEGORY_LINES })
   const nameOverrides = ref<Record<string, { category: string; line: LineType }>>({})
 
   // ========== Cloud Sync ==========
