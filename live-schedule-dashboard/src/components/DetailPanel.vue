@@ -78,6 +78,20 @@ function getAudienceByLine(line: LineType) {
 function getAttributionForAudience(segmentId: string) {
   return selectedAttribution.value?.items.find((i) => i.segmentId === segmentId)
 }
+
+function formatCount(n: number): string {
+  if (n === 0) return '0'
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
+  if (n >= 1000) return `${(n / 10000).toFixed(2)}w`
+  return `${Math.round(n)}`
+}
+
+function formatGMV(n: number): string {
+  if (n === 0) return '¥0'
+  if (n >= 10000) return `¥${(n / 10000).toFixed(1)}w`
+  if (n >= 1000) return `¥${(n / 1000).toFixed(1)}k`
+  return `¥${Math.round(n)}`
+}
 </script>
 
 <template>
@@ -239,11 +253,11 @@ function getAttributionForAudience(segmentId: string) {
                 <span class="text-slate-300">|</span>
                 <span class="text-emerald-600">LTV ¥{{ getAttributionForAudience(aud.segmentId)!.ltv.toLocaleString() }}</span>
                 <span class="text-slate-300">|</span>
-                <span class="text-blue-600">预计线索 {{ (getAttributionForAudience(aud.segmentId)!.expectedLeads / 10000).toFixed(1) }}w</span>
+                <span class="text-blue-600">预计线索 {{ formatCount(getAttributionForAudience(aud.segmentId)!.expectedLeads) }}</span>
                 <span class="text-slate-300">|</span>
-                <span class="text-indigo-600">预计首单 {{ (getAttributionForAudience(aud.segmentId)!.expectedFirstOrders / 10000).toFixed(1) }}w</span>
+                <span class="text-indigo-600">预计首单 {{ formatCount(getAttributionForAudience(aud.segmentId)!.expectedFirstOrders) }}</span>
                 <span class="text-slate-300">|</span>
-                <span class="text-purple-600">预计GMV ¥{{ (getAttributionForAudience(aud.segmentId)!.expectedGMV / 10000).toFixed(1) }}w</span>
+                <span class="text-purple-600">预计GMV {{ formatGMV(getAttributionForAudience(aud.segmentId)!.expectedGMV) }}</span>
               </div>
             </div>
             <div v-if="getAudienceByLine(line).length === 0" class="text-xs text-slate-400 py-1">
@@ -262,15 +276,15 @@ function getAttributionForAudience(segmentId: string) {
             </div>
             <div class="text-center">
               <div class="text-xs text-slate-500">预计线索</div>
-              <div class="text-sm font-mono font-bold text-blue-700">{{ (selectedAttribution.expectedLeads / 10000).toFixed(1) }}w</div>
+              <div class="text-sm font-mono font-bold text-blue-700">{{ formatCount(selectedAttribution.expectedLeads) }}</div>
             </div>
             <div class="text-center">
               <div class="text-xs text-slate-500">预计首单</div>
-              <div class="text-sm font-mono font-bold text-indigo-700">{{ (selectedAttribution.expectedFirstOrders / 10000).toFixed(1) }}w</div>
+              <div class="text-sm font-mono font-bold text-indigo-700">{{ formatCount(selectedAttribution.expectedFirstOrders) }}</div>
             </div>
             <div class="text-center">
               <div class="text-xs text-slate-500">预计GMV</div>
-              <div class="text-sm font-mono font-bold text-emerald-700">¥{{ (selectedAttribution.expectedGMV / 10000).toFixed(1) }}w</div>
+              <div class="text-sm font-mono font-bold text-emerald-700">{{ formatGMV(selectedAttribution.expectedGMV) }}</div>
             </div>
           </div>
         </div>

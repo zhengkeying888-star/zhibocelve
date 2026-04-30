@@ -40,6 +40,20 @@ function selectLive(id: string) {
   store.setSelectedLive(id)
   emit('close')
 }
+
+function formatCount(n: number): string {
+  if (n === 0) return '0'
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
+  if (n >= 1000) return `${(n / 10000).toFixed(2)}w`
+  return `${Math.round(n)}`
+}
+
+function formatGMV(n: number): string {
+  if (n === 0) return '¥0'
+  if (n >= 10000) return `¥${(n / 10000).toFixed(1)}w`
+  if (n >= 1000) return `¥${(n / 1000).toFixed(1)}k`
+  return `¥${Math.round(n)}`
+}
 </script>
 
 <template>
@@ -58,7 +72,7 @@ function selectLive(id: string) {
             <div class="flex items-center gap-4">
               <div class="text-right">
                 <div class="text-[10px] text-slate-500">本周预计GMV</div>
-                <div class="text-lg font-mono font-bold text-emerald-700">¥{{ (totals.gmv / 10000).toFixed(1) }}w</div>
+                <div class="text-lg font-mono font-bold text-emerald-700">{{ formatGMV(totals.gmv) }}</div>
               </div>
               <button class="text-slate-400 hover:text-slate-600 w-8 h-8 flex items-center justify-center rounded hover:bg-slate-100 transition-colors" @click="emit('close')">
                 &times;
@@ -140,13 +154,13 @@ function selectLive(id: string) {
                     {{ (att.totalExposure / 10000).toFixed(1) }}w
                   </td>
                   <td class="py-2.5 text-right font-mono text-blue-700">
-                    {{ (att.expectedLeads / 10000).toFixed(1) }}w
+                    {{ formatCount(att.expectedLeads) }}
                   </td>
                   <td class="py-2.5 text-right font-mono text-indigo-700">
-                    {{ (att.expectedFirstOrders / 10000).toFixed(1) }}w
+                    {{ formatCount(att.expectedFirstOrders) }}
                   </td>
                   <td class="py-2.5 text-right font-mono text-emerald-700">
-                    ¥{{ (att.expectedGMV / 10000).toFixed(1) }}w
+                    {{ formatGMV(att.expectedGMV) }}
                   </td>
                 </tr>
               </tbody>
@@ -165,15 +179,15 @@ function selectLive(id: string) {
               </div>
               <div class="text-center">
                 <div class="text-[10px] text-slate-500">总预计线索</div>
-                <div class="text-sm font-mono font-bold text-blue-700">{{ (totals.leads / 10000).toFixed(1) }}w</div>
+                <div class="text-sm font-mono font-bold text-blue-700">{{ formatCount(totals.leads) }}</div>
               </div>
               <div class="text-center">
                 <div class="text-[10px] text-slate-500">总预计首单</div>
-                <div class="text-sm font-mono font-bold text-indigo-700">{{ (totals.firstOrders / 10000).toFixed(1) }}w</div>
+                <div class="text-sm font-mono font-bold text-indigo-700">{{ formatCount(totals.firstOrders) }}</div>
               </div>
               <div class="text-center">
                 <div class="text-[10px] text-slate-500">总预计GMV</div>
-                <div class="text-sm font-mono font-bold text-emerald-700">¥{{ (totals.gmv / 10000).toFixed(1) }}w</div>
+                <div class="text-sm font-mono font-bold text-emerald-700">{{ formatGMV(totals.gmv) }}</div>
               </div>
             </div>
           </div>

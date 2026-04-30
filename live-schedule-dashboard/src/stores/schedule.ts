@@ -194,18 +194,11 @@ export const useScheduleStore = defineStore('schedule', () => {
         const audCat = normalizeCategory(aud.category)
         const audCohort = extractCohortMonth(aud.timeRange)
         // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
-        // 优先按 cohortMonth 精确匹配，再 fallback 到全量平均
-        let pref = crossCategoryPrefs.value.find(
-          (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat && p.cohortMonth === audCohort
-        )
-        if (!pref) {
-          pref = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
-          )
-        }
+        // 优先按 cohortMonth 精确匹配，再 fallback 到全量平均，再 fallback 到家族匹配
+        const pref = findCrossPref(audCat, liveCat, audCohort)
         const crossRate = pref?.crossRate || 0
         const conversionRate = pref?.conversionRate || 0
-        const ltv = live.ltv || 80
+        const ltv = pref?.ltv || live.ltv || 80
         const leads = aud.count * crossRate
         const firstOrders = leads * conversionRate
         const gmv = firstOrders * ltv
@@ -247,18 +240,14 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
 
   function extractCohortMonth(timeRange: string): string | null {
-    // "2025.1.12-2026.4.26" -> "2026-04"
-    const parts = timeRange.split('-')
-    if (parts.length < 2) {
-      // Single part: try to extract month directly
-      const match = timeRange.match(/(\d{4})\.(\d{1,2})/)
-      if (!match) return null
-      return `${match[1]}-${match[2].padStart(2, '0')}`
-    }
-    const endPart = parts[parts.length - 1].trim()
-    const match = endPart.match(/(\d{4})\.(\d{1,2})/)
-    if (!match) return null
-    return `${match[1]}-${match[2].padStart(2, '0')}`
+    if (!timeRange) return null
+    // Handle formats like: "2025.1.12-2026.4.26", "2025.1-2026.4", "截止2026.4", "2026.4"
+    // 1. Try to find the latest YYYY.M or YYYY.MM pattern in the string
+    const allMatches = Array.from(timeRange.matchAll(/(\d{4})[\.年](\d{1,2})/g))
+    if (allMatches.length === 0) return null
+    // Use the last match (latest date) as cohort month
+    const lastMatch = allMatches[allMatches.length - 1]
+    return `${lastMatch[1]}-${lastMatch[2].padStart(2, '0')}`
   }
 
   function parseDate(fullDate: string): Date {
@@ -278,6 +267,41 @@ export const useScheduleStore = defineStore('schedule', () => {
     const d1 = resolveDate(a)
     const d2 = resolveDate(b)
     return Math.abs(Math.floor((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)))
+  }
+
+  // ========== Cross-Pref Lookup (with family fallback) ==========
+  function findCrossPref(audienceCat: string, liveCat: string, cohortMonth: string | null): CrossCategoryPref | undefined {
+    const normAud = normalizeCategory(audienceCat)
+    const normLive = normalizeCategory(liveCat)
+
+    // 1. Exact match with cohortMonth
+    let pref = crossCategoryPrefs.value.find(
+      (p) => normalizeCategory(p.fromCategory) === normAud && normalizeCategory(p.toCategory) === normLive && p.cohortMonth === cohortMonth
+    )
+    if (pref) return pref
+
+    // 2. Exact match without cohortMonth (fallback to average)
+    pref = crossCategoryPrefs.value.find(
+      (p) => normalizeCategory(p.fromCategory) === normAud && normalizeCategory(p.toCategory) === normLive
+    )
+    if (pref) return pref
+
+    // 3. Family match: audience category is a variant of base category in cross-pref
+    // e.g. audCat="普拉提BCD" should match fromCategory="普拉提"
+    for (const p of crossCategoryPrefs.value) {
+      if (normalizeCategory(p.toCategory) === normLive && p.cohortMonth === cohortMonth) {
+        const normFrom = normalizeCategory(p.fromCategory)
+        if (isSameCategoryFamily(normFrom, normAud)) return p
+      }
+    }
+    for (const p of crossCategoryPrefs.value) {
+      if (normalizeCategory(p.toCategory) === normLive) {
+        const normFrom = normalizeCategory(p.fromCategory)
+        if (isSameCategoryFamily(normFrom, normAud)) return p
+      }
+    }
+
+    return undefined
   }
 
   // ========== Actions ==========
@@ -532,35 +556,17 @@ export const useScheduleStore = defineStore('schedule', () => {
       seg.assignedTo = undefined
     }
 
-    // Build fast lookup maps for cross-category prefs.
-    // cohortPrefMap: key = cohortMonth|fromCategory|toCategory (exact match)
-    // avgPrefMap: key = fromCategory|toCategory (fallback average)
-    const cohortPrefMap = new Map<string, { crossRate: number; ltv: number }>()
-    const avgPrefMap = new Map<string, { crossRate: number; ltv: number }>()
-    for (const p of crossCategoryPrefs.value) {
-      const fromCat = normalizeCategory(p.fromCategory)
-      const toCat = normalizeCategory(p.toCategory)
-      const avgKey = `${fromCat}|${toCat}`
-      if (!avgPrefMap.has(avgKey)) {
-        avgPrefMap.set(avgKey, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
-      }
-      if (p.cohortMonth && p.cohortMonth !== 'unknown') {
-        const cohortKey = `${p.cohortMonth}|${fromCat}|${toCat}`
-        if (!cohortPrefMap.has(cohortKey)) {
-          cohortPrefMap.set(cohortKey, { crossRate: p.crossRate || 0, ltv: p.ltv || 0 })
+    function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
+      const cohortMonth = extractCohortMonth(timeRange)
+      const pref = findCrossPref(audienceCat, liveCat, cohortMonth)
+      if (pref) {
+        return {
+          crossRate: pref.crossRate || 0,
+          conversionRate: pref.conversionRate || 0,
+          ltv: pref.ltv || 0,
         }
       }
-    }
-
-    function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; ltv: number } {
-      const cohortMonth = extractCohortMonth(timeRange)
-      if (cohortMonth) {
-        const cohortKey = `${cohortMonth}|${normalizeCategory(audienceCat)}|${normalizeCategory(liveCat)}`
-        const cohortPref = cohortPrefMap.get(cohortKey)
-        if (cohortPref) return cohortPref
-      }
-      const avgKey = `${normalizeCategory(audienceCat)}|${normalizeCategory(liveCat)}`
-      return avgPrefMap.get(avgKey) || { crossRate: 0, ltv: 0 }
+      return { crossRate: 0, conversionRate: 0, ltv: 0 }
     }
 
     // Score and sort (skip friend-circle)

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
 import type { LineType, AudienceSegment } from '@/types'
+import { CATEGORY_TO_LINE } from '@/utils/categoryMapping'
 
 const store = useScheduleStore()
 
@@ -110,18 +111,33 @@ interface InventoryItem {
 }
 
 const inventoryByLine = computed(() => {
-  const map = new Map<string, InventoryItem>()
-  for (const seg of store.audienceSegments) {
-    const key = `${seg.line}-${seg.category}`
-    if (!map.has(key)) {
-      map.set(key, {
-        category: seg.category,
-        line: seg.line,
+  const result: Record<string, InventoryItem[]> = { health: [], beauty: [], interest: [] }
+
+  // 1. Seed all standard categories from CATEGORY_TO_LINE so even empty ones appear
+  for (const [category, line] of Object.entries(CATEGORY_TO_LINE)) {
+    if (!result[line].find((i) => i.category === category)) {
+      result[line].push({
+        category,
+        line: line as LineType,
         totalCount: 0,
         cohorts: [],
       })
     }
-    const item = map.get(key)!
+  }
+
+  // 2. Overlay actual audience segment data
+  for (const seg of store.audienceSegments) {
+    const item = result[seg.line].find((i) => i.category === seg.category)
+    if (!item) {
+      // Segment category not in standard mapping (rare); append it
+      result[seg.line].push({
+        category: seg.category,
+        line: seg.line,
+        totalCount: seg.count,
+        cohorts: [],
+      })
+      continue
+    }
     item.totalCount += seg.count
     const cohortMonth = extractCohortMonth(seg.timeRange) || 'unknown'
     const existingCohort = item.cohorts.find((c) => c.cohortMonth === cohortMonth)
@@ -137,14 +153,19 @@ const inventoryByLine = computed(() => {
     }
   }
 
-  const result: Record<string, InventoryItem[]> = { health: [], beauty: [], interest: [] }
-  for (const item of map.values()) {
-    item.cohorts.sort((a, b) => b.count - a.count)
-    result[item.line].push(item)
-  }
+  // 3. Sort: items with inventory first, then by count desc
   for (const line of Object.keys(result) as LineType[]) {
-    result[line].sort((a, b) => b.totalCount - a.totalCount)
+    result[line].sort((a, b) => {
+      const aHas = a.totalCount > 0 || a.cohorts.some((c) => c.segments.some((s) => s.status === 'available'))
+      const bHas = b.totalCount > 0 || b.cohorts.some((c) => c.segments.some((s) => s.status === 'available'))
+      if (aHas !== bHas) return (bHas ? 1 : 0) - (aHas ? 1 : 0)
+      return b.totalCount - a.totalCount
+    })
+    for (const item of result[line]) {
+      item.cohorts.sort((a, b) => b.count - a.count)
+    }
   }
+
   return result
 })
 
