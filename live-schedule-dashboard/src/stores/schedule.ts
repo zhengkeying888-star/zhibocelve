@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   LiveStream,
   AudienceSegment,
@@ -17,6 +17,8 @@ import type {
 } from '@/types'
 import { normalizeCategory, isSameCategoryFamily } from '@/utils/categoryMapping'
 import { validateSchedule } from '@/utils/scheduleValidator'
+import { loadScheduleState, saveScheduleState, subscribeToChanges } from '@/lib/cloudSync'
+import type { ScheduleState } from '@/lib/cloudSync'
 
 function loadFromStorage<T>(key: string, fallback: T): T {
   try {
@@ -25,10 +27,6 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   } catch {
     return fallback
   }
-}
-
-function saveToStorage(key: string, value: unknown) {
-  localStorage.setItem(key, JSON.stringify(value))
 }
 
 export const useScheduleStore = defineStore('schedule', () => {
@@ -60,16 +58,81 @@ export const useScheduleStore = defineStore('schedule', () => {
     fakeHistory: false,
   })
 
-  // Category / line / grade mappings (persisted)
-  const categoryGrades = ref<Record<string, GradeType>>(
-    loadFromStorage('schedule.categoryGrades', {})
+  // Category / line / grade mappings (persisted in cloud)
+  const categoryGrades = ref<Record<string, GradeType>>({})
+  const categoryLines = ref<Record<string, LineType>>({})
+  const nameOverrides = ref<Record<string, { category: string; line: LineType }>>({})
+
+  // ========== Cloud Sync ==========
+  let isLoadingFromCloud = false
+
+  function serializeState(): ScheduleState {
+    return {
+      currentWeek: currentWeek.value,
+      weekDays: weekDays.value,
+      liveStreams: liveStreams.value,
+      audienceSegments: audienceSegments.value,
+      historyRecords: historyRecords.value,
+      crossPrefs: crossPrefs.value,
+      crossCategoryPrefs: crossCategoryPrefs.value,
+      fakeLiveHistory: fakeLiveHistory.value,
+      categoryGrades: categoryGrades.value,
+      categoryLines: categoryLines.value,
+      nameOverrides: nameOverrides.value,
+    }
+  }
+
+  function deserializeState(state: ScheduleState) {
+    if (state.currentWeek) currentWeek.value = state.currentWeek
+    if (state.weekDays) weekDays.value = state.weekDays
+    if (state.liveStreams) liveStreams.value = state.liveStreams
+    if (state.audienceSegments) audienceSegments.value = state.audienceSegments
+    if (state.historyRecords) historyRecords.value = state.historyRecords
+    if (state.crossPrefs) crossPrefs.value = state.crossPrefs
+    if (state.crossCategoryPrefs) crossCategoryPrefs.value = state.crossCategoryPrefs
+    if (state.fakeLiveHistory) fakeLiveHistory.value = state.fakeLiveHistory
+    if (state.categoryGrades) categoryGrades.value = state.categoryGrades
+    if (state.categoryLines) categoryLines.value = state.categoryLines
+    if (state.nameOverrides) nameOverrides.value = state.nameOverrides
+  }
+
+  async function loadFromCloud() {
+    isLoadingFromCloud = true
+    const state = await loadScheduleState()
+    if (state) {
+      deserializeState(state)
+      console.log('[Cloud] Loaded from cloud')
+    } else {
+      // Fallback: try localStorage for configs when cloud is not available
+      categoryGrades.value = loadFromStorage('schedule.categoryGrades', {})
+      categoryLines.value = loadFromStorage('schedule.categoryLines', {})
+      nameOverrides.value = loadFromStorage('schedule.nameOverrides', {})
+    }
+    isLoadingFromCloud = false
+  }
+
+  const triggerSave = (() => {
+    let timer: ReturnType<typeof setTimeout>
+    return () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        if (isLoadingFromCloud) return
+        saveScheduleState(serializeState())
+      }, 800)
+    }
+  })()
+
+  watch(
+    [liveStreams, audienceSegments, historyRecords, crossPrefs, crossCategoryPrefs, fakeLiveHistory, categoryGrades, categoryLines, nameOverrides, currentWeek, weekDays],
+    () => triggerSave(),
+    { deep: true }
   )
-  const categoryLines = ref<Record<string, LineType>>(
-    loadFromStorage('schedule.categoryLines', {})
-  )
-  const nameOverrides = ref<Record<string, { category: string; line: LineType }>>(
-    loadFromStorage('schedule.nameOverrides', {})
-  )
+
+  subscribeToChanges(() => {
+    loadFromCloud()
+  })
+
+  loadFromCloud()
 
   // ========== Getters ==========
   const selectedLive = computed(() =>
@@ -234,24 +297,20 @@ export const useScheduleStore = defineStore('schedule', () => {
   function setCategoryGrade(category: string, grade: GradeType) {
     const canonical = normalizeCategory(category)
     categoryGrades.value[canonical] = grade
-    saveToStorage('schedule.categoryGrades', categoryGrades.value)
   }
 
   function setCategoryLine(category: string, line: LineType) {
     const canonical = normalizeCategory(category)
     categoryLines.value[canonical] = line
-    saveToStorage('schedule.categoryLines', categoryLines.value)
   }
 
   function setNameOverride(name: string, category: string, line: LineType) {
     const canonical = normalizeCategory(category)
     nameOverrides.value[name] = { category: canonical, line }
-    saveToStorage('schedule.nameOverrides', nameOverrides.value)
   }
 
   function removeNameOverride(name: string) {
     delete nameOverrides.value[name]
-    saveToStorage('schedule.nameOverrides', nameOverrides.value)
   }
 
   function applyCategoryGrades() {
