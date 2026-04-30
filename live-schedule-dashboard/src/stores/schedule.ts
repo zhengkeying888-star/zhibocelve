@@ -182,7 +182,7 @@ export const useScheduleStore = defineStore('schedule', () => {
           (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
         )
         const crossRate = pref?.crossRate || 0
-        const ltv = pref?.ltv || 0
+        const ltv = live.ltv || 80
         const conv = aud.count * crossRate
         const gmv = conv * ltv
         items.push({
@@ -604,6 +604,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         grade: grades[i % 5],
         owner: ['静雯', '刘芳', '李慧'][i % 3],
         link: 'https://example.com/live',
+        ltv: 80,
         assignedAudiences: [],
         exposure: 0,
         conflictReasons: [],

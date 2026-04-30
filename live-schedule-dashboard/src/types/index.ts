@@ -34,6 +34,7 @@ export interface LiveStream {
   grade: GradeType | null
   owner: string
   link?: string
+  ltv?: number
   assignedAudiences: AssignedAudience[]
   exposure: number
   conflictReasons: string[]

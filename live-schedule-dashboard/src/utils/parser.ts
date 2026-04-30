@@ -233,6 +233,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         grade: null,
         owner: '',
         link,
+        ltv: 80,
         assignedAudiences: [],
         exposure: 0,
         conflictReasons: [],
@@ -294,6 +295,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     grade: null,
     owner: '',
     link,
+    ltv: 80,
     assignedAudiences: [],
     exposure: 0,
     conflictReasons: [],
@@ -892,11 +894,15 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
     if (!row || row.length < 3) continue
 
     const lineStr = normCell(row[0])
-    if (lineStr) {
-      currentLine = parseLine(lineStr)
-    }
     const rawCategory = normCell(row[1])
     if (!rawCategory) continue
+
+    if (lineStr) {
+      currentLine = parseLine(lineStr)
+    } else {
+      // Fallback: infer line from category name so empty cells don't inherit the wrong line
+      currentLine = parseLineFromCategory(rawCategory)
+    }
 
     const category = normalizeCategory(rawCategory)
     const lineType = currentLine
