@@ -454,12 +454,10 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     // Phase 1: Same-line only. Protect each line's pool so high-score lives
     // from other lines cannot steal audience from weaker lines.
-    for (const { live } of scored) {
-      const target = targets[live.grade || 'C']
-      let current = live.exposure
-
+    // Use round-robin to ensure every live gets at least some audience.
+    function getCandidates(live: LiveStream) {
       const liveCat = normalizeCategory(live.category)
-      const candidates = audienceSegments.value
+      return audienceSegments.value
         .filter((s) => s.status === 'available' && s.line === live.line)
         // 同品类互斥：任何直播都不能宣发同品类的 audience
         .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
@@ -482,11 +480,19 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (bLTV !== aLTV) return bLTV - aLTV
           return b.count - a.count
         })
+    }
 
-      for (const seg of candidates) {
-        if (current >= target) break
-        tryAssign(live, seg)
-        current += seg.count
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const { live } of scored) {
+        const target = targets[live.grade || 'C']
+        if (live.exposure >= target) continue
+        const candidates = getCandidates(live)
+        if (candidates.length > 0) {
+          tryAssign(live, candidates[0])
+          changed = true
+        }
       }
     }
 
