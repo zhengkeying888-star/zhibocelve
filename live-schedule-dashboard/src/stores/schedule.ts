@@ -132,8 +132,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       let expectedGMV = 0
       for (const aud of live.assignedAudiences) {
         const audCat = normalizeCategory(aud.category)
+        // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
         const pref = crossCategoryPrefs.value.find(
-          (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === audCat
+          (p) => normalizeCategory(p.fromCategory) === audCat && normalizeCategory(p.toCategory) === liveCat
         )
         const crossRate = pref?.crossRate || 0
         const ltv = pref?.ltv || 0
@@ -462,20 +463,19 @@ export const useScheduleStore = defineStore('schedule', () => {
         // 同品类互斥：任何直播都不能宣发同品类的 audience
         .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
         .sort((a, b) => {
-          // Prefer higher crossRate (跨科率)
+          // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
           const aRate = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(a.category)
+            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(a.category) && normalizeCategory(p.toCategory) === liveCat
           )?.crossRate || 0
           const bRate = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(b.category)
+            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(b.category) && normalizeCategory(p.toCategory) === liveCat
           )?.crossRate || 0
           if (bRate !== aRate) return bRate - aRate
-          // Then prefer higher LTV
           const aLTV = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(a.category)
+            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(a.category) && normalizeCategory(p.toCategory) === liveCat
           )?.ltv || 0
           const bLTV = crossCategoryPrefs.value.find(
-            (p) => normalizeCategory(p.fromCategory) === liveCat && normalizeCategory(p.toCategory) === normalizeCategory(b.category)
+            (p) => normalizeCategory(p.fromCategory) === normalizeCategory(b.category) && normalizeCategory(p.toCategory) === liveCat
           )?.ltv || 0
           if (bLTV !== aLTV) return bLTV - aLTV
           return b.count - a.count
