@@ -134,7 +134,8 @@ interface InventoryItem {
   category: string
   line: LineType
   totalCount: number
-  cohorts: { cohortMonth: string; count: number; segments: AudienceSegment[] }[]
+  availableCount: number
+  cohorts: { cohortMonth: string; count: number; availableCount: number; segments: AudienceSegment[] }[]
 }
 
 const inventoryByLine = computed(() => {
@@ -147,6 +148,7 @@ const inventoryByLine = computed(() => {
         category,
         line: line as LineType,
         totalCount: 0,
+        availableCount: 0,
         cohorts: [],
       })
     }
@@ -161,20 +163,24 @@ const inventoryByLine = computed(() => {
         category: seg.category,
         line: seg.line,
         totalCount: seg.count,
+        availableCount: seg.status === 'available' ? seg.count : 0,
         cohorts: [],
       })
       continue
     }
     item.totalCount += seg.count
+    if (seg.status === 'available') item.availableCount += seg.count
     const cohortMonth = extractCohortMonth(seg.timeRange) || 'unknown'
     const existingCohort = item.cohorts.find((c) => c.cohortMonth === cohortMonth)
     if (existingCohort) {
       existingCohort.count += seg.count
+      if (seg.status === 'available') existingCohort.availableCount += seg.count
       existingCohort.segments.push(seg)
     } else {
       item.cohorts.push({
         cohortMonth,
         count: seg.count,
+        availableCount: seg.status === 'available' ? seg.count : 0,
         segments: [seg],
       })
     }
@@ -317,8 +323,17 @@ function onRecommendClick(rec: Recommendation) {
             >
               <div class="text-[11px] font-medium text-slate-700 mb-1">
                 {{ item.category }} · 多期存量
-                <span class="ml-1 font-mono text-[10px] text-slate-500">
-                  {{ (item.totalCount / 10000).toFixed(1) }}w
+                <span class="ml-1 font-mono text-[10px] text-slate-700 font-medium">
+                  {{ (item.availableCount / 10000).toFixed(1) }}w
+                </span>
+                <span v-if="item.totalCount > item.availableCount" class="ml-1 font-mono text-[10px] text-slate-400">
+                  / 共 {{ (item.totalCount / 10000).toFixed(1) }}w
+                </span>
+                <span
+                  v-if="item.cohorts.some((c) => c.segments.some((s) => s.status === 'used'))"
+                  class="ml-1 px-1 py-0.5 bg-amber-50 text-amber-700 rounded text-[9px]"
+                >
+                  {{ item.cohorts.every((c) => c.segments.every((s) => s.status === 'used')) ? '已排' : '部分已排' }}
                 </span>
               </div>
               <div class="pl-2 space-y-1">
@@ -332,16 +347,21 @@ function onRecommendClick(rec: Recommendation) {
                   <span class="text-[10px] text-slate-500">{{ cohort.cohortMonth }}</span>
                   <div class="flex items-center gap-2">
                     <span
-                      v-if="cohort.segments.every((s) => s.status === 'used')"
-                      class="px-1 py-0.5 bg-slate-200 text-slate-600 rounded text-[9px]"
+                      v-if="cohort.segments.some((s) => s.status === 'used')"
+                      class="px-1 py-0.5 rounded text-[9px]"
+                      :class="cohort.segments.every((s) => s.status === 'used')
+                        ? 'bg-slate-200 text-slate-600'
+                        : 'bg-amber-50 text-amber-700'"
                     >
-                      已排
+                      {{ cohort.segments.every((s) => s.status === 'used') ? '已排' : '部分已排' }}
                     </span>
-                    <span
-                      class="text-[10px] font-mono"
-                      :class="cohort.segments.every((s) => s.status === 'used') ? 'text-slate-400' : 'text-slate-700 font-medium'"
+                    <span class="text-[10px] font-mono"
+                      :class="cohort.availableCount === 0 ? 'text-slate-400' : 'text-slate-700 font-medium'"
                     >
-                      {{ (cohort.count / 10000).toFixed(1) }}w
+                      {{ (cohort.availableCount / 10000).toFixed(1) }}w
+                      <span v-if="cohort.count > cohort.availableCount" class="text-slate-400 font-normal">
+                        / {{ (cohort.count / 10000).toFixed(1) }}w
+                      </span>
                     </span>
                   </div>
                 </div>
