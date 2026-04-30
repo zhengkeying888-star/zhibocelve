@@ -55,6 +55,11 @@ async function handleSubmit() {
     return
   }
 
+  // Clear old data so stale segments from previous uploads don't linger
+  store.setLiveStreams([])
+  store.setAudienceSegments([])
+  store.setHistoryRecords([])
+
   overallStatus.value = 'parsing'
 
   for (const item of files.value) {
