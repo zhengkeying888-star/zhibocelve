@@ -103,7 +103,8 @@ const recommendations = computed(() => {
     added.add(key)
 
     const crossRate = pref.crossRate || 0
-    const conversionRate = pref.conversionRate || 0
+    // 如果 cross-pref 中没有 conversionRate 数据，默认线索全部转化（crossRate 已是整体转化率）
+    const conversionRate = (pref.conversionRate || 0) > 0 ? pref.conversionRate : 1
     const ltv = pref.ltv || 0
     const totalCount = group.totalCount
     const leads = totalCount * crossRate

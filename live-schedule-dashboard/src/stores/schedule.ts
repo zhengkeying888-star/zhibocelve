@@ -197,7 +197,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         // 优先按 cohortMonth 精确匹配，再 fallback 到全量平均，再 fallback 到家族匹配
         const pref = findCrossPref(audCat, liveCat, audCohort)
         const crossRate = pref?.crossRate || 0
-        const conversionRate = pref?.conversionRate || 0
+        // 如果 cross-pref 中没有 conversionRate 数据，默认线索全部转化（crossRate 已是整体转化率）
+        const conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
         const ltv = pref?.ltv || live.ltv || 80
         const leads = aud.count * crossRate
         const firstOrders = leads * conversionRate
@@ -560,13 +561,16 @@ export const useScheduleStore = defineStore('schedule', () => {
       const cohortMonth = extractCohortMonth(timeRange)
       const pref = findCrossPref(audienceCat, liveCat, cohortMonth)
       if (pref) {
+        const crossRate = pref.crossRate || 0
+        // 如果 cross-pref 中没有 conversionRate 数据，默认线索全部转化（crossRate 已是整体转化率）
+        const conversionRate = (pref.conversionRate || 0) > 0 ? pref.conversionRate : 1
         return {
-          crossRate: pref.crossRate || 0,
-          conversionRate: pref.conversionRate || 0,
+          crossRate,
+          conversionRate,
           ltv: pref.ltv || 0,
         }
       }
-      return { crossRate: 0, conversionRate: 0, ltv: 0 }
+      return { crossRate: 0, conversionRate: 1, ltv: 0 }
     }
 
     // Score and sort (skip friend-circle)
