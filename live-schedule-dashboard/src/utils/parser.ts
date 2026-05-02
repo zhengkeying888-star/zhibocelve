@@ -547,17 +547,28 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   const ltvGuideIdx = headers.findIndex(h => h.includes('LTV_导量'))
   const ltvGeneralIdx = headers.findIndex(h => h.includes('LTV'))
 
+  function parseNumeric(val: any): number {
+    if (val === '' || val === undefined || val === null) return NaN
+    if (typeof val === 'number') return val
+    const s = String(val).trim()
+    // Handle percentage strings like "0.30%" or "0.0030%"
+    if (s.endsWith('%')) {
+      return Number(s.replace('%', '')) / 100
+    }
+    return Number(s)
+  }
+
   function getNumberValue(row: any[], liveIdx: number, guideIdx: number, generalIdx: number): number {
     if (liveIdx >= 0) {
-      const val = Number(row[liveIdx] || 0)
+      const val = parseNumeric(row[liveIdx])
       if (!isNaN(val) && val > 0) return val
     }
     if (guideIdx >= 0) {
-      const val = Number(row[guideIdx] || 0)
+      const val = parseNumeric(row[guideIdx])
       if (!isNaN(val) && val > 0) return val
     }
     if (generalIdx >= 0) {
-      const val = Number(row[generalIdx] || 0)
+      const val = parseNumeric(row[generalIdx])
       if (!isNaN(val)) return val
     }
     return 0
@@ -566,17 +577,17 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   function getLtvValue(row: any[], liveIdx: number, guideIdx: number, generalIdx: number): number {
     if (liveIdx >= 0) {
       const val = row[liveIdx]
-      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      const num = parseNumeric(val)
       if (!isNaN(num) && num > 0) return num
     }
     if (guideIdx >= 0) {
       const val = row[guideIdx]
-      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      const num = parseNumeric(val)
       if (!isNaN(num) && num > 0) return num
     }
     if (generalIdx >= 0) {
       const val = row[generalIdx]
-      const num = (val === '' || val === undefined) ? 0 : Number(val)
+      const num = parseNumeric(val)
       if (!isNaN(num)) return num
     }
     return 0
