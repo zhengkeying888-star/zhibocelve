@@ -23,6 +23,7 @@ export interface ScheduleState {
   categoryGrades: Record<string, GradeType>
   categoryLines: Record<string, LineType>
   nameOverrides: Record<string, { category: string; line: LineType }>
+  gmvMultiplier?: number
   learnedRules?: Array<{
     id: string
     liveCategory: string

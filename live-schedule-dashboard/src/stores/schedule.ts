@@ -64,6 +64,9 @@ export const useScheduleStore = defineStore('schedule', () => {
   const categoryLines = ref<Record<string, LineType>>({ ...DEFAULT_CATEGORY_LINES })
   const nameOverrides = ref<Record<string, { category: string; line: LineType }>>({})
 
+  // Global calibration multiplier (temporary fix for crossRate underestimation)
+  const gmvMultiplier = ref(18)
+
   // Learned rules from manual adjustments
   interface LearnedRule {
     id: string
@@ -92,6 +95,7 @@ export const useScheduleStore = defineStore('schedule', () => {
       categoryGrades: categoryGrades.value,
       categoryLines: categoryLines.value,
       nameOverrides: nameOverrides.value,
+      gmvMultiplier: gmvMultiplier.value,
       learnedRules: learnedRules.value,
     }
   }
@@ -109,6 +113,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (state.categoryGrades) categoryGrades.value = state.categoryGrades
     if (state.categoryLines) categoryLines.value = state.categoryLines
     if (state.nameOverrides) nameOverrides.value = state.nameOverrides
+    if (state.gmvMultiplier != null) gmvMultiplier.value = state.gmvMultiplier
   }
 
   async function loadFromCloud() {
@@ -202,7 +207,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         const ltv = pref?.ltv || live.ltv || 80
         const leads = aud.count * crossRate
         const firstOrders = leads * conversionRate
-        const gmv = firstOrders * ltv
+        const gmv = firstOrders * ltv * gmvMultiplier.value
         items.push({
           segmentId: aud.segmentId,
           category: aud.category,
