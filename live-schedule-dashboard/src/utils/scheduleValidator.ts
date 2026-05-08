@@ -1,4 +1,4 @@
-import type { LiveStream, AudienceSegment, CrossCategoryPref } from '@/types'
+import type { LiveStream, AudienceSegment, CrossCategoryPref, LineType } from '@/types'
 import { isSameCategoryFamily } from './categoryMapping'
 
 export interface ValidationResult {
@@ -44,10 +44,16 @@ export function validateSchedule(
     }
   }
 
-  // 2. Same-line check
+  // 2. Line check (supports joint live and neutral category cross-line)
   for (const live of lives) {
+    const allowedLines: LineType[] =
+      live.isJoint && live.lines && live.lines.length > 0
+        ? live.lines
+        : (live.category === '一杰瑜伽' || live.category === '东方养正瑜伽') && live.line === 'beauty'
+          ? ['beauty', 'health']
+          : [live.line]
     for (const aud of live.assignedAudiences) {
-      if (aud.line !== live.line) {
+      if (!allowedLines.includes(aud.line)) {
         stats.crossLineViolations++
         errors.push(
           `[CROSS_LINE] ${live.name} (${live.line}) 被错误分配了 ${aud.line} 线 audience: ${aud.category}`
@@ -115,11 +121,11 @@ export function validateSchedule(
     }
   }
 
-  // 7. Target achievement check (warning level)
-  const targets: Record<string, number> = { S: 450000, A: 300000, B: 200000, C: 150000 }
+  // 7. Target achievement check (warning level) — PRD v2.0 targets
+  const targets: Record<string, number> = { S: 350000, A: 220000, B: 150000, C: 120000 }
   for (const live of lives) {
     if (live.slot === 'friend-circle') continue
-    const target = targets[live.grade || 'C'] || 150000
+    const target = live.target ?? targets[live.grade || 'C'] ?? 120000
     if (live.exposure < target) {
       warnings.push(
         `[TARGET_MISS] ${live.name} (${live.grade || '无评级'}) exposure=${live.exposure}，未达到目标 ${target}`

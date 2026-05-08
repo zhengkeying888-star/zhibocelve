@@ -45,8 +45,16 @@ interface Recommendation {
 
 const recommendations = computed(() => {
   if (!selectedLive.value) return []
-  const liveCat = normalizeCategory(selectedLive.value.category)
-  const liveLine = selectedLive.value.line
+  const live = selectedLive.value
+  const liveCat = normalizeCategory(live.category)
+
+  // PRD v2.0: determine allowed lines (joint live / neutral category cross-line)
+  const allowedLines: LineType[] =
+    live.isJoint && live.lines && live.lines.length > 0
+      ? live.lines
+      : (live.category === '一杰瑜伽' || live.category === '东方养正瑜伽') && live.line === 'beauty'
+        ? ['beauty', 'health']
+        : [live.line]
 
   const recs: Recommendation[] = []
   const added = new Set<string>()
@@ -54,7 +62,7 @@ const recommendations = computed(() => {
   // 1. Group available audience segments by (normalized category, cohortMonth)
   const segGroups = new Map<string, { segs: AudienceSegment[]; totalCount: number }>()
   for (const seg of store.audienceSegments) {
-    if (seg.line !== liveLine) continue
+    if (!allowedLines.includes(seg.line)) continue
     if (seg.status !== 'available') continue
     // 同品类互斥：不能推荐同品类族的 audience
     if (isSameCategoryFamily(liveCat, seg.category)) continue
@@ -70,7 +78,7 @@ const recommendations = computed(() => {
     group.totalCount += seg.count
   }
 
-  // 2. For each segment group, find the best matching cross-pref
+  // 2. For each segment group, find the best matching cross-pref (strict equality only)
   for (const [key, group] of segGroups) {
     const [segCat, cohortMonth] = key.split('|')
 
@@ -82,18 +90,6 @@ const recommendations = computed(() => {
     if (!pref) {
       pref = store.crossCategoryPrefs.find(
         (p) => normalizeCategory(p.toCategory) === liveCat && normalizeCategory(p.fromCategory) === segCat
-      )
-    }
-    // Fallback: family match with cohortMonth
-    if (!pref) {
-      pref = store.crossCategoryPrefs.find(
-        (p) => normalizeCategory(p.toCategory) === liveCat && isSameCategoryFamily(p.fromCategory, segCat) && p.cohortMonth === cohortMonth
-      )
-    }
-    // Fallback: family match ignoring cohortMonth
-    if (!pref) {
-      pref = store.crossCategoryPrefs.find(
-        (p) => normalizeCategory(p.toCategory) === liveCat && isSameCategoryFamily(p.fromCategory, segCat)
       )
     }
 

@@ -15,7 +15,7 @@ import type {
   LiveAttribution,
   AttributionItem,
 } from '@/types'
-import { normalizeCategory, isSameCategoryFamily } from '@/utils/categoryMapping'
+import { normalizeCategory, isSameCategoryFamily, parseLineFromCategory } from '@/utils/categoryMapping'
 import { validateSchedule } from '@/utils/scheduleValidator'
 import { loadScheduleState, saveScheduleState, subscribeToChanges } from '@/lib/cloudSync'
 import type { ScheduleState } from '@/lib/cloudSync'
@@ -66,6 +66,17 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   // Global calibration multiplier (temporary fix for crossRate underestimation)
   const gmvMultiplier = ref(18)
+
+  // PRD v2.0: neutral categories that can cross beauty → health
+  const NEUTRAL_CATEGORIES = new Set(['一杰瑜伽', '东方养正瑜伽'])
+
+  // PRD v2.0 target exposure
+  const TARGET_EXPOSURE: Record<string, number> = {
+    S: 350000,
+    A: 220000,
+    B: 150000,
+    C: 120000,
+  }
 
   // Learned rules from manual adjustments
   interface LearnedRule {
@@ -275,39 +286,21 @@ export const useScheduleStore = defineStore('schedule', () => {
     return Math.abs(Math.floor((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)))
   }
 
-  // ========== Cross-Pref Lookup (with family fallback) ==========
+  // ========== Cross-Pref Lookup (cohort-aware, strict equality) ==========
   function findCrossPref(audienceCat: string, liveCat: string, cohortMonth: string | null): CrossCategoryPref | undefined {
     const normAud = normalizeCategory(audienceCat)
     const normLive = normalizeCategory(liveCat)
 
     // 1. Exact match with cohortMonth
-    let pref = crossCategoryPrefs.value.find(
+    const pref = crossCategoryPrefs.value.find(
       (p) => normalizeCategory(p.fromCategory) === normAud && normalizeCategory(p.toCategory) === normLive && p.cohortMonth === cohortMonth
     )
     if (pref) return pref
 
     // 2. Exact match without cohortMonth (fallback to average)
-    pref = crossCategoryPrefs.value.find(
+    return crossCategoryPrefs.value.find(
       (p) => normalizeCategory(p.fromCategory) === normAud && normalizeCategory(p.toCategory) === normLive
     )
-    if (pref) return pref
-
-    // 3. Family match: audience category is a variant of base category in cross-pref
-    // e.g. audCat="普拉提BCD" should match fromCategory="普拉提"
-    for (const p of crossCategoryPrefs.value) {
-      if (normalizeCategory(p.toCategory) === normLive && p.cohortMonth === cohortMonth) {
-        const normFrom = normalizeCategory(p.fromCategory)
-        if (isSameCategoryFamily(normFrom, normAud)) return p
-      }
-    }
-    for (const p of crossCategoryPrefs.value) {
-      if (normalizeCategory(p.toCategory) === normLive) {
-        const normFrom = normalizeCategory(p.fromCategory)
-        if (isSameCategoryFamily(normFrom, normAud)) return p
-      }
-    }
-
-    return undefined
   }
 
   // ========== Actions ==========
@@ -389,6 +382,28 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   function applyCategoryGrades() {
     for (const live of liveStreams.value) {
+      // Joint live: compute grades/lines/target from all sub-categories
+      if (live.isJoint && live.categories) {
+        const grades: string[] = []
+        const lines: LineType[] = []
+        for (const cat of live.categories) {
+          const canonical = normalizeCategory(cat)
+          const grade = categoryGrades.value[canonical]
+          if (grade) grades.push(grade)
+          const line = categoryLines.value[canonical] || parseLineFromCategory(canonical)
+          if (line) lines.push(line)
+        }
+        if (grades.length > 0) {
+          live.grade = grades[0] as GradeType
+          live.target = grades.reduce((sum, g) => sum + (TARGET_EXPOSURE[g] || 120000), 0)
+        }
+        if (lines.length > 0) {
+          live.line = lines[0]
+          live.lines = Array.from(new Set(lines)) as LineType[]
+        }
+        continue
+      }
+
       const canonical = normalizeCategory(live.category)
       const grade = categoryGrades.value[canonical]
       if (grade) live.grade = grade
@@ -405,6 +420,16 @@ export const useScheduleStore = defineStore('schedule', () => {
         live.line = override.line
       }
     }
+  }
+
+  function getAllowedLines(live: LiveStream): Set<LineType> {
+    if (live.isJoint && live.lines && live.lines.length > 0) {
+      return new Set(live.lines)
+    }
+    if (NEUTRAL_CATEGORIES.has(live.category) && live.line === 'beauty') {
+      return new Set(['beauty', 'health'])
+    }
+    return new Set([live.line])
   }
 
   function assignAudience(liveId: string, segmentId: string) {
@@ -427,14 +452,18 @@ export const useScheduleStore = defineStore('schedule', () => {
       seg.assignedTo = undefined
     }
 
-    // Enforce same-line rule
-    if (seg.line !== live.line) {
+    // Enforce line rules (joint live / neutral categories)
+    const allowedLines = getAllowedLines(live)
+    if (!allowedLines.has(seg.line)) {
       console.warn('Cross-line assignment blocked:', seg.line, '->', live.line)
       return
     }
 
     // Enforce same-category exclusion
-    if (isSameCategoryFamily(live.category, seg.category)) {
+    const excludedCats = live.isJoint && live.categories
+      ? new Set(live.categories.map((c) => normalizeCategory(c)))
+      : new Set([normalizeCategory(live.category)])
+    if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, seg.category))) {
       console.warn('Same-category assignment blocked:', live.category, '->', seg.category)
       return
     }
@@ -578,9 +607,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       return { crossRate: 0, conversionRate: 1, ltv: 0 }
     }
 
-    // Score and sort (skip friend-circle)
+    // Score and sort (skip friend-circle and fake lives)
     const scored = liveStreams.value
-      .filter((live) => live.slot !== 'friend-circle')
+      .filter((live) => live.slot !== 'friend-circle' && live.type !== 'fake')
       .map((live) => {
         let score = 0
         if (live.grade === 'S') score += 100
@@ -603,13 +632,6 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     scored.sort((a, b) => b.score - a.score)
 
-    const targets: Record<string, number> = {
-      S: 450000,
-      A: 300000,
-      B: 200000,
-      C: 150000,
-    }
-
     function tryAssign(live: LiveStream, seg: AudienceSegment) {
       const conflicts = checkConflicts(live, seg)
       const assigned: AssignedAudience = {
@@ -626,15 +648,28 @@ export const useScheduleStore = defineStore('schedule', () => {
       live.conflictReasons.push(...conflicts)
     }
 
-    // Phase 1: Same-line only. Protect each line's pool so high-score lives
-    // from other lines cannot steal audience from weaker lines.
-    // Use round-robin to ensure every live gets at least some audience.
+    // PRD v2.0: joint live / neutral category cross-line support
     function getCandidates(live: LiveStream) {
       const liveCat = normalizeCategory(live.category)
+
+      // Determine allowed lines
+      let allowedLines: Set<LineType>
+      if (live.isJoint && live.lines && live.lines.length > 0) {
+        allowedLines = new Set(live.lines)
+      } else if (NEUTRAL_CATEGORIES.has(live.category) && live.line === 'beauty') {
+        allowedLines = new Set(['beauty', 'health'])
+      } else {
+        allowedLines = new Set([live.line])
+      }
+
+      // Determine excluded categories
+      const excludedCats = live.isJoint && live.categories
+        ? new Set(live.categories.map((c) => normalizeCategory(c)))
+        : new Set([liveCat])
+
       return audienceSegments.value
-        .filter((s) => s.status === 'available' && s.line === live.line)
-        // 同品类互斥：任何直播都不能宣发同品类的 audience
-        .filter((s) => !isSameCategoryFamily(liveCat, normalizeCategory(s.category)))
+        .filter((s) => s.status === 'available' && allowedLines.has(s.line))
+        .filter((s) => !Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(s.category))))
         .sort((a, b) => {
           const aPref = getCrossPref(a.category, live.category, a.timeRange)
           const bPref = getCrossPref(b.category, live.category, b.timeRange)
@@ -652,7 +687,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     while (changed) {
       changed = false
       for (const { live } of scored) {
-        const target = targets[live.grade || 'C']
+        const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
         if (live.exposure >= target) continue
         const candidates = getCandidates(live)
         if (candidates.length > 0) {
@@ -665,13 +700,6 @@ export const useScheduleStore = defineStore('schedule', () => {
       // Yield to browser so UI stays responsive
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
-
-    // NOTE: Cross-line assignment is intentionally removed.
-    // Business rule: health audience -> health live only;
-    //                beauty audience -> beauty live only;
-    //                interest audience -> interest live only.
-    // If a live cannot reach its target with same-line audience,
-    // the user can manually add cross-line segments in DetailPanel.
 
     // Validate schedule after generation
     const validation = validateSchedule(liveStreams.value, audienceSegments.value, crossCategoryPrefs.value)

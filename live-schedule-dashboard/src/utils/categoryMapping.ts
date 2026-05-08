@@ -199,8 +199,8 @@ export function parseLineFromCategory(category: string): LineType {
   return CATEGORY_TO_LINE[canonical] || 'health'
 }
 
-export function isSameCategoryFamily(liveCat: string, segCat: string): boolean {
-  const lc = normalizeCategory(liveCat).toLowerCase().replace(/\s+/g, '')
-  const sc = normalizeCategory(segCat).toLowerCase().replace(/\s+/g, '')
-  return sc.includes(lc) || lc.includes(sc)
+export function isSameCategoryFamily(a: string, b: string): boolean {
+  // PRD v2.0: 只有 normalizeCategory 后的标准名严格相等才算同品类族
+  // 子串匹配和家族关键词匹配已移除
+  return normalizeCategory(a) === normalizeCategory(b)
 }

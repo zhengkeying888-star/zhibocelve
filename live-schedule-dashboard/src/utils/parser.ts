@@ -181,11 +181,74 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
 
   const timeRangeRegex = /(\d{1,2}[：:]\d{2})\s*[-~－]\s*(\d{1,2}[：:]\d{2})/
   const timeIndices: number[] = []
+  const liveNames: string[] = []
+  const timeMatches: { start: string; end: string }[] = []
+
   for (let i = 0; i < lines.length; i++) {
-    if (timeRangeRegex.test(lines[i])) timeIndices.push(i)
+    const line = lines[i]
+    if (timeRangeRegex.test(line)) {
+      timeIndices.push(i)
+      const m = line.match(timeRangeRegex)
+      if (m) timeMatches.push({ start: m[1].replace('：', ':'), end: m[2].replace('：', ':') })
+      continue
+    }
+    if (
+      line.includes('开播时间') ||
+      line.includes('预约链接') ||
+      line.includes('直播间ID') ||
+      line.includes('复用') ||
+      line.includes('需剪辑') ||
+      line.includes('已有单课id')
+    ) {
+      continue
+    }
+    liveNames.push(line)
   }
 
-  // If multiple time ranges, split into multiple lives
+  // 早间晨练：同单元格多行 = 一场联合直播（PRD v2.0）
+  if (slot === 'morning' && liveNames.length > 1) {
+    const categories = liveNames.map(name => inferCategory(name.replace('晨练', '').trim()))
+    const linesList = categories.map(cat => parseLine(cat))
+    const primaryCategory = categories[0]
+    const primaryLine = linesList[0]
+    const uniqueLines = Array.from(new Set(linesList)) as LineType[]
+
+    const startTime = timeMatches.length > 0 ? timeMatches[0].start : '07:30'
+    const endTime = timeMatches.length > 0 ? timeMatches[timeMatches.length - 1].end : '10:00'
+
+    let link = ''
+    for (const line of lines) {
+      if (line.includes('预约链接') || line.includes('http')) {
+        link = extractLink(line)
+      }
+    }
+
+    return [{
+      id: generateId(),
+      name: liveNames.join(' + '),
+      startTime,
+      endTime,
+      date: day.date,
+      type: 'real',
+      category: primaryCategory,
+      categories,
+      line: primaryLine,
+      lines: uniqueLines,
+      slot,
+      grade: null,
+      owner: '',
+      link,
+      ltv: 80,
+      assignedAudiences: [],
+      exposure: 0,
+      conflictReasons: [],
+      isRecommended: false,
+      isCrossCategory: false,
+      isJoint: true,
+    }]
+  }
+
+  // If multiple time ranges (non-morning), split into multiple lives
   if (timeIndices.length > 1) {
     const result: LiveStream[] = []
     let startIdx = 0
@@ -257,7 +320,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   }
 
   // Single live
-  const name = lines[0]
+  const name = liveNames[0] || lines[0]
   let startTime = ''
   let endTime = ''
   let link = ''

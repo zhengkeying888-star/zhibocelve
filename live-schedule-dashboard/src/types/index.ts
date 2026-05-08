@@ -40,6 +40,11 @@ export interface LiveStream {
   conflictReasons: string[]
   isRecommended: boolean
   isCrossCategory: boolean
+  // Joint live fields (v2)
+  isJoint?: boolean
+  categories?: string[]
+  lines?: LineType[]
+  target?: number
 }
 
 export interface HistoryRecord {
