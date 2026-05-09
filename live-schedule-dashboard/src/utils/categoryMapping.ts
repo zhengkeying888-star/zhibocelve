@@ -194,9 +194,9 @@ export function normalizeCategory(name: string): string {
   return s
 }
 
-export function parseLineFromCategory(category: string): LineType {
+export function parseLineFromCategory(category: string): LineType | null {
   const canonical = normalizeCategory(category)
-  return CATEGORY_TO_LINE[canonical] || 'health'
+  return CATEGORY_TO_LINE[canonical] || null
 }
 
 export function isSameCategoryFamily(a: string, b: string): boolean {

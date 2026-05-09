@@ -132,13 +132,13 @@ async function handleSubmit() {
   emit('done')
   emit('close')
 
-  // Always re-run autoSchedule when audience data is available.
-  // Completed schedule files may contain cross-line audience assignments
-  // that violate the垂类 rule; we reset and regenerate from scratch.
-  // Also re-run when cross-pref is uploaded because sorting depends on crossRate/LTV.
+  // Re-run autoSchedule only when the schedule file does NOT already contain
+  // audience assignments (e.g. raw schedule from the livestream team).
+  // Completed/calibrated schedules should preserve their manual assignments.
   const hasAudience = store.audienceSegments.length > 0
   const hasCrossPref = files.value.some(f => f.key === 'crossPref' && f.status === 'done')
-  if (hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
+  const livesHaveAssignments = store.liveStreams.some(l => l.assignedAudiences.length > 0)
+  if (!livesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
     await store.autoSchedule()
   }
 }

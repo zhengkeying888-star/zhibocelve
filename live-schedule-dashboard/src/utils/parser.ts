@@ -23,8 +23,8 @@ function parseLine(lineStr: string): LineType {
   // Fallback to keyword heuristics for unknown categories
   const s = String(lineStr || '').trim().toLowerCase()
   if (s.includes('健康') || s.includes('五禽戏') || s.includes('睡眠') || s.includes('太极') || s.includes('气血') || s.includes('固气')) return 'health'
-  if (s.includes('变美') || s.includes('美容') || s.includes('瑜伽') || s.includes('普拉提') || s.includes('驻颜')) return 'beauty'
-  if (s.includes('兴趣') || s.includes('摄影') || s.includes('唱歌') || s.includes('声乐') || s.includes('短视频')) return 'interest'
+  if (s.includes('变美') || s.includes('美容') || s.includes('瑜伽') || s.includes('普拉提') || s.includes('驻颜') || s.includes('吃瘦')) return 'beauty'
+  if (s.includes('兴趣') || s.includes('摄影') || s.includes('唱歌') || s.includes('声乐') || s.includes('短视频') || s.includes('朗诵')) return 'interest'
   return 'health'
 }
 
@@ -198,8 +198,14 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       line.includes('直播间ID') ||
       line.includes('复用') ||
       line.includes('需剪辑') ||
-      line.includes('已有单课id')
+      line.includes('已有单课id') ||
+      line.includes('不回捞') ||
+      /^【.+】$/.test(line)
     ) {
+      continue
+    }
+    // Skip Excel time values like 0.291666666666667
+    if (/^\d+\.\d+$/.test(line) && parseFloat(line) < 1) {
       continue
     }
     liveNames.push(line)
@@ -320,7 +326,16 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   }
 
   // Single live
-  const name = liveNames[0] || lines[0]
+  let name = liveNames[0] || lines[0]
+  // If first name is unrecognizable but a later name is, prefer the recognizable one
+  if (liveNames.length > 1 && inferCategory(name) === name) {
+    for (let i = 1; i < liveNames.length; i++) {
+      if (inferCategory(liveNames[i]) !== liveNames[i]) {
+        name = liveNames[i]
+        break
+      }
+    }
+  }
   let startTime = ''
   let endTime = ''
   let link = ''
@@ -734,7 +749,7 @@ export function parseScheduleWorkbook(buffer: ArrayBuffer, fileName?: string): {
     for (const live of lives) {
       for (const aud of live.assignedAudiences) {
         const canonicalCat = normalizeCategory(aud.category)
-        const correctLine = parseLineFromCategory(canonicalCat)
+        const correctLine = parseLineFromCategory(canonicalCat) || 'health'
         const key = `${correctLine}-${canonicalCat}-${aud.timeRange}`
         if (!segmentMap.has(key)) {
           segmentMap.set(key, {
@@ -841,15 +856,28 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
           slotDayExposure.set(`${currentSlot}-${day.date}`, exposure)
         }
       }
-      // Audience rows: handled separately below because they span multiple rows
-      rowIdx++
-      continue
-    }
+      // Audience assignment rows: collect this row and subsequent rows that
+      // belong to the same line block (subsequent rows have empty col0/col1).
+      if (col1 === '健康线' || col1 === '变美线' || col1 === '兴趣线') {
+        const audienceRows: any[][] = [row]
+        let r = rowIdx + 1
+        while (r < json.length) {
+          const nextRow = json[r]
+          if (!nextRow || nextRow.length < 3) { r++; continue }
+          const nc0 = normCell(nextRow[0])
+          const nc1 = normCell(nextRow[1])
+          if (isBlockHeaderRow(nc0)) break
+          if (isMetadataRow(nc0, nc1) && (nc1 === '文案负责人' || nc1 === '曝光量级' || nc1 === '健康线' || nc1 === '变美线' || nc1 === '兴趣线')) break
+          if (nc0 !== '' || (nc1 !== '' && !/【.+】/.test(nc1))) break
+          if (!hasDayData(nextRow)) break
+          audienceRows.push(nextRow)
+          r++
+        }
+        parseAudienceAssignmentBlock(audienceRows, weekDays, currentSlot, lives)
+        rowIdx = r
+        continue
+      }
 
-    // If this is an audience assignment row (should have been caught by isMetadataRow,
-    // but handle here just in case it slipped through with col0 being non-empty)
-    if (col1 === '健康线' || col1 === '变美线' || col1 === '兴趣线') {
-      parseAudienceAssignmentRow(row, weekDays, currentSlot, lives)
       rowIdx++
       continue
     }
@@ -924,18 +952,25 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
   return { lives, weekDays }
 }
 
-function parseAudienceAssignmentRow(row: any[], weekDays: WeekDay[], currentSlot: SlotType, lives: LiveStream[]) {
-  const col1 = normCell(row[1])
-  const lineKey: LineType = col1 === '健康线' ? 'health' : col1 === '变美线' ? 'beauty' : 'interest'
+function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], currentSlot: SlotType, lives: LiveStream[]) {
+  if (rows.length === 0) return
+  const lineKey: LineType = normCell(rows[0][1]) === '健康线' ? 'health' : normCell(rows[0][1]) === '变美线' ? 'beauty' : 'interest'
+
   for (let col = 2; col <= 8; col++) {
-    const cell = normCell(row[col])
-    if (!cell) continue
+    const lines: string[] = []
+    for (const r of rows) {
+      const cell = normCell(r[col])
+      if (cell) lines.push(cell)
+    }
+    if (lines.length === 0) continue
+    const merged = lines.join('\n')
+
     const day = weekDays[col - 2]
     if (!day) continue
     const dayLives = lives.filter(l => l.date === day.date && l.slot === currentSlot)
     if (dayLives.length === 0) continue
 
-    const audLines = cell.split('\n').map(l => l.trim()).filter(Boolean)
+    const audLines = merged.split('\n').map(l => l.trim()).filter(Boolean)
     let currentTimeRange = ''
     for (let i = 0; i < audLines.length; i++) {
       const al = audLines[i]
@@ -1022,7 +1057,7 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
     // We intentionally ignore the Excel "线" column because it is often empty
     // or copy-pasted incorrectly, which causes cross-line contamination.
     const category = normalizeCategory(rawCategory)
-    const lineType = parseLineFromCategory(category)
+    const lineType = parseLineFromCategory(category) || 'health'
 
     for (let g = 0; g < timeIndices.length; g++) {
       const ti = timeIndices[g]
