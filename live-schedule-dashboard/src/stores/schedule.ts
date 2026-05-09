@@ -399,7 +399,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
         if (grades.length > 0) {
           live.grade = grades[0] as GradeType
-          live.target = grades.reduce((sum, g) => sum + (TARGET_EXPOSURE[g] || 120000), 0)
+          // Joint live target: primary live gets full target, subsequent lives get half
+          live.target = grades.reduce((sum, g, idx) => sum + (TARGET_EXPOSURE[g] || 120000) * (idx === 0 ? 1 : 0.5), 0)
         }
         if (lines.length > 0) {
           live.line = lines[0]
