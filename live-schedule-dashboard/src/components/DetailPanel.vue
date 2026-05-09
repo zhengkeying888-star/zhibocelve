@@ -49,9 +49,10 @@ const lineDotClass: Record<string, string> = {
 
 const selectedLive = computed(() => store.selectedLive)
 
+// PRD v2.0 target exposure; support joint live override
 const targetExposure = computed(() => {
-  const targets: Record<string, number> = { S: 450000, A: 300000, B: 200000, C: 150000 }
-  return targets[selectedLive.value?.grade || 'C'] || 150000
+  const targets: Record<string, number> = { S: 350000, A: 220000, B: 150000, C: 120000 }
+  return selectedLive.value?.target ?? targets[selectedLive.value?.grade || 'C'] ?? 120000
 })
 
 const selectedAttribution = computed(() => {

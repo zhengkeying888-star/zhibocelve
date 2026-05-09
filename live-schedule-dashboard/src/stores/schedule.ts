@@ -325,6 +325,10 @@ export const useScheduleStore = defineStore('schedule', () => {
     weekDays.value = list
   }
 
+  function setCurrentWeek(weekStr: string) {
+    currentWeek.value = weekStr
+  }
+
   function setHistoryRecords(list: HistoryRecord[]) {
     historyRecords.value = list
   }
@@ -879,6 +883,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     setLiveStreams,
     setAudienceSegments,
     setWeekDays,
+    setCurrentWeek,
     setHistoryRecords,
     setCrossPrefs,
     setCrossCategoryPrefs,

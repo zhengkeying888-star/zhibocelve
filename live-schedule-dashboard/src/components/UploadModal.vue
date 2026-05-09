@@ -12,6 +12,19 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'done'): void }>()
 
 const store = useScheduleStore()
 
+function formatWeekRange(weekDays: { fullDate: string }[]): string {
+  if (weekDays.length === 0) return ''
+  const parse = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number)
+    return { y, m, d }
+  }
+  const start = parse(weekDays[0].fullDate)
+  const end = parse(weekDays[weekDays.length - 1].fullDate)
+  const startStr = `${start.y}.${start.m}.${start.d}`
+  const endStr = start.y === end.y ? `${end.m}.${end.d}` : `${end.y}.${end.m}.${end.d}`
+  return `${startStr} - ${endStr}`
+}
+
 interface FileItem {
   key: string
   label: string
@@ -74,6 +87,7 @@ async function handleSubmit() {
           if (result.lives.length > 0) {
             store.setLiveStreams(result.lives)
             store.setWeekDays(result.weekDays)
+            store.setCurrentWeek(formatWeekRange(result.weekDays))
             // Apply historical mappings so user doesn't have to re-categorize every week
             store.applyNameOverrides()
             store.applyCategoryGrades()
