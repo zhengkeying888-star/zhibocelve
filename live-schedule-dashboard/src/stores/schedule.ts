@@ -598,6 +598,12 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
       const cohortMonth = extractCohortMonth(timeRange)
+
+      // 同品类族（垂类）：crossRate = 1.0（无需跨科）
+      if (isSameCategoryFamily(audienceCat, liveCat)) {
+        return { crossRate: 1.0, conversionRate: 1.0, ltv: 80 }
+      }
+
       const pref = findCrossPref(audienceCat, liveCat, cohortMonth)
       if (pref) {
         const crossRate = pref.crossRate || 0
@@ -672,18 +678,42 @@ export const useScheduleStore = defineStore('schedule', () => {
         ? new Set(live.categories.map((c) => normalizeCategory(c)))
         : new Set([liveCat])
 
+      const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
+      const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
+      const baseTarget = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+
       return audienceSegments.value
         .filter((s) => s.status === 'available' && allowedLines.has(s.line))
         .filter((s) => !Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(s.category))))
         .sort((a, b) => {
+          // 1. 同品类族优先
+          const aSameFamily = isSameCategoryFamily(a.category, live.category)
+          const bSameFamily = isSameCategoryFamily(b.category, live.category)
+          if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
+
+          // 2. 已分配品类去重（强制分散搭配）
+          const aDupCat = assignedCats.has(normalizeCategory(a.category))
+          const bDupCat = assignedCats.has(normalizeCategory(b.category))
+          if (aDupCat !== bDupCat) return aDupCat ? 1 : -1
+
+          // 3. 已分配 timeRange 去重
+          const aDupRange = assignedRanges.has(a.timeRange)
+          const bDupRange = assignedRanges.has(b.timeRange)
+          if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
+
+          // 4. 超大段降权（超过目标 60% 的段降低优先级，避免 greedy 独吞）
+          const aOversized = a.count > baseTarget * 0.6
+          const bOversized = b.count > baseTarget * 0.6
+          if (aOversized !== bOversized) return aOversized ? 1 : -1
+
+          // 5. 预估 GMV = count × crossRate × LTV
           const aPref = getCrossPref(a.category, live.category, a.timeRange)
           const bPref = getCrossPref(b.category, live.category, b.timeRange)
-          const aRate = aPref.crossRate || 0
-          const bRate = bPref.crossRate || 0
-          if (bRate !== aRate) return bRate - aRate
-          const aLTV = aPref.ltv || 0
-          const bLTV = bPref.ltv || 0
-          if (bLTV !== aLTV) return bLTV - aLTV
+          const aGMV = a.count * (aPref.crossRate || 0) * (aPref.ltv || 0)
+          const bGMV = b.count * (bPref.crossRate || 0) * (bPref.ltv || 0)
+          if (bGMV !== aGMV) return bGMV - aGMV
+
+          // 6. count 降序
           return b.count - a.count
         })
     }
@@ -693,7 +723,8 @@ export const useScheduleStore = defineStore('schedule', () => {
       changed = false
       for (const { live } of scored) {
         const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
-        if (live.exposure >= target) continue
+        // 允许超额分配最多 30%，强制分散搭配多个 audience 段
+        if (live.exposure >= target * 1.3) continue
         const candidates = getCandidates(live)
         if (candidates.length > 0) {
           tryAssign(live, candidates[0])
