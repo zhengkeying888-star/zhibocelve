@@ -167,7 +167,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     { deep: true }
   )
 
-  subscribeToChanges(() => {
+  let unsubscribeChanges = subscribeToChanges(() => {
     loadFromCloud()
   })
 
@@ -601,6 +601,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   async function autoSchedule() {
     isAutoScheduling = true
+    unsubscribeChanges()
     try {
       // Collect fake-live audiences before reset (for global exclusion)
       const fakeAudiences = new Set<string>()
@@ -872,8 +873,12 @@ export const useScheduleStore = defineStore('schedule', () => {
     console.log('【诊断】总库存:', totalInventory, '总触达:', totalAssigned, '段数:', audienceSegments.value.length)
     } finally {
       isAutoScheduling = false
-      // Trigger one save after autoSchedule completes
-      triggerSave()
+      // Force-save immediately so cloud gets the fresh result before re-enabling sync
+      saveScheduleState(serializeState()).then(() => {
+        unsubscribeChanges = subscribeToChanges(() => {
+          loadFromCloud()
+        })
+      })
     }
   }
 
