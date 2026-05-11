@@ -137,8 +137,10 @@ async function handleSubmit() {
   // Completed/calibrated schedules should preserve their manual assignments.
   const hasAudience = store.audienceSegments.length > 0
   const hasCrossPref = files.value.some(f => f.key === 'crossPref' && f.status === 'done')
-  const livesHaveAssignments = store.liveStreams.some(l => l.assignedAudiences.length > 0)
-  if (!livesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
+  // Only skip autoSchedule if REAL lives already have assignments.
+  // Fake lives may have 【上次直播排期】 data, which should NOT block autoSchedule.
+  const realLivesHaveAssignments = store.liveStreams.some(l => l.type === 'real' && l.assignedAudiences.length > 0)
+  if (!realLivesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
     await store.autoSchedule()
   }
 }

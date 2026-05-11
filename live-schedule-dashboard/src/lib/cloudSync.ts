@@ -75,6 +75,9 @@ export async function saveScheduleState(state: ScheduleState): Promise<void> {
     localStorage.setItem('schedule.categoryGrades', JSON.stringify(state.categoryGrades))
     localStorage.setItem('schedule.categoryLines', JSON.stringify(state.categoryLines))
     localStorage.setItem('schedule.nameOverrides', JSON.stringify(state.nameOverrides))
+    if (state.learnedRules) {
+      localStorage.setItem('schedule.learnedRules', JSON.stringify(state.learnedRules))
+    }
     return
   }
 

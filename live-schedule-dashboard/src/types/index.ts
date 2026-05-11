@@ -11,6 +11,7 @@ export interface AudienceSegment {
   count: number
   status: 'available' | 'used' | 'conflict-3d' | 'conflict-30d'
   assignedTo?: string
+  assignedDates?: string[] // track dates this segment was assigned in current week (max 2)
 }
 
 export interface AssignedAudience {

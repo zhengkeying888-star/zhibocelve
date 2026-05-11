@@ -121,8 +121,9 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (state.crossPrefs) crossPrefs.value = state.crossPrefs
     if (state.crossCategoryPrefs) crossCategoryPrefs.value = state.crossCategoryPrefs
     if (state.fakeLiveHistory) fakeLiveHistory.value = state.fakeLiveHistory
-    if (state.categoryGrades) categoryGrades.value = state.categoryGrades
-    if (state.categoryLines) categoryLines.value = state.categoryLines
+    // Merge with defaults so empty cloud state doesn't wipe initialized defaults
+    if (state.categoryGrades) categoryGrades.value = { ...DEFAULT_CATEGORY_GRADES, ...state.categoryGrades }
+    if (state.categoryLines) categoryLines.value = { ...DEFAULT_CATEGORY_LINES, ...state.categoryLines }
     if (state.nameOverrides) nameOverrides.value = state.nameOverrides
     if (state.gmvMultiplier != null) gmvMultiplier.value = state.gmvMultiplier
   }
@@ -135,9 +136,11 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.log('[Cloud] Loaded from cloud')
     } else {
       // Fallback: try localStorage for configs when cloud is not available
-      categoryGrades.value = loadFromStorage('schedule.categoryGrades', {})
-      categoryLines.value = loadFromStorage('schedule.categoryLines', {})
+      // Merge with defaults so empty localStorage doesn't wipe initialized defaults
+      categoryGrades.value = { ...DEFAULT_CATEGORY_GRADES, ...loadFromStorage('schedule.categoryGrades', {}) }
+      categoryLines.value = { ...DEFAULT_CATEGORY_LINES, ...loadFromStorage('schedule.categoryLines', {}) }
       nameOverrides.value = loadFromStorage('schedule.nameOverrides', {})
+      learnedRules.value = loadFromStorage('schedule.learnedRules', [])
     }
     isLoadingFromCloud = false
   }
@@ -154,7 +157,7 @@ export const useScheduleStore = defineStore('schedule', () => {
   })()
 
   watch(
-    [liveStreams, audienceSegments, historyRecords, crossPrefs, crossCategoryPrefs, fakeLiveHistory, categoryGrades, categoryLines, nameOverrides, currentWeek, weekDays],
+    [liveStreams, audienceSegments, historyRecords, crossPrefs, crossCategoryPrefs, fakeLiveHistory, categoryGrades, categoryLines, nameOverrides, currentWeek, weekDays, learnedRules, gmvMultiplier],
     () => triggerSave(),
     { deep: true }
   )
@@ -181,7 +184,9 @@ export const useScheduleStore = defineStore('schedule', () => {
   })
 
   const totalExposure = computed(() => {
-    return liveStreams.value.reduce((sum, l) => sum + l.exposure, 0)
+    return liveStreams.value
+      .filter((l) => l.type === 'real')
+      .reduce((sum, l) => sum + l.exposure, 0)
   })
 
   const availableAudience = computed(() => {
@@ -490,6 +495,8 @@ export const useScheduleStore = defineStore('schedule', () => {
     live.exposure += seg.count
     seg.status = 'used'
     seg.assignedTo = liveId
+    if (!seg.assignedDates) seg.assignedDates = []
+    seg.assignedDates.push(live.date)
   }
 
   function removeAudience(liveId: string, segmentId: string) {
@@ -505,6 +512,9 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (seg) {
       seg.status = 'available'
       seg.assignedTo = undefined
+      if (seg.assignedDates) {
+        seg.assignedDates = seg.assignedDates.filter((d) => d !== live.date)
+      }
     }
     recalcConflicts(live)
   }
@@ -585,15 +595,35 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
 
   async function autoSchedule() {
-    // Reset
+    // Collect fake-live audiences before reset (for global exclusion)
+    const fakeAudiences = new Set<string>()
     for (const live of liveStreams.value) {
+      if (live.type === 'fake') {
+        for (const aud of live.assignedAudiences) {
+          fakeAudiences.add(`${aud.category}-${aud.timeRange}`)
+        }
+      }
+    }
+
+    // Reset: preserve fake-live history data
+    for (const live of liveStreams.value) {
+      if (live.type === 'fake') {
+        live.conflictReasons = []
+        continue
+      }
       live.assignedAudiences = []
       live.exposure = 0
       live.conflictReasons = []
     }
     for (const seg of audienceSegments.value) {
-      seg.status = 'available'
-      seg.assignedTo = undefined
+      const key = `${seg.category}-${seg.timeRange}`
+      if (fakeAudiences.has(key)) {
+        seg.status = 'used'
+      } else {
+        seg.status = 'available'
+        seg.assignedTo = undefined
+      }
+      seg.assignedDates = []
     }
 
     function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
@@ -656,11 +686,13 @@ export const useScheduleStore = defineStore('schedule', () => {
       live.exposure += seg.count
       seg.status = 'used'
       seg.assignedTo = live.id
+      if (!seg.assignedDates) seg.assignedDates = []
+      seg.assignedDates.push(live.date)
       live.conflictReasons.push(...conflicts)
     }
 
     // PRD v2.0: joint live / neutral category cross-line support
-    function getCandidates(live: LiveStream) {
+    function getCandidates(live: LiveStream, allowReuse: boolean = false) {
       const liveCat = normalizeCategory(live.category)
 
       // Determine allowed lines
@@ -682,8 +714,28 @@ export const useScheduleStore = defineStore('schedule', () => {
       const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
       const baseTarget = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
 
+      // Helper: count learned-rule matches for (liveCategory -> segCategory)
+      function getRuleBoost(liveCategory: string, segCategory: string): number {
+        const lc = normalizeCategory(liveCategory)
+        const sc = normalizeCategory(segCategory)
+        return learnedRules.value.filter(
+          (r) => normalizeCategory(r.liveCategory) === lc && normalizeCategory(r.toCategory) === sc
+        ).length
+      }
+
       return audienceSegments.value
-        .filter((s) => s.status === 'available' && allowedLines.has(s.line))
+        .filter((s) => {
+          if (!allowedLines.has(s.line)) return false
+          const dates = s.assignedDates || []
+          if (!allowReuse) {
+            // Round 1: only segments that have never been assigned this week
+            return dates.length === 0
+          }
+          // Round 2 (refill): allow reuse if under 2 times and 3-day gap
+          if (dates.length >= 2) return false
+          if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
+          return true
+        })
         .filter((s) => !Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(s.category))))
         .sort((a, b) => {
           // 1. 同品类族优先
@@ -706,34 +758,55 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bOversized = b.count > baseTarget * 0.6
           if (aOversized !== bOversized) return aOversized ? 1 : -1
 
-          // 5. 预估 GMV = count × crossRate × LTV
+          // 5. 已学习的规则匹配优先（用户手动确认过的搭配）
+          const aRuleBoost = getRuleBoost(live.category, a.category)
+          const bRuleBoost = getRuleBoost(live.category, b.category)
+          if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
+
+          // 6. 预估 GMV = count × crossRate × LTV
           const aPref = getCrossPref(a.category, live.category, a.timeRange)
           const bPref = getCrossPref(b.category, live.category, b.timeRange)
           const aGMV = a.count * (aPref.crossRate || 0) * (aPref.ltv || 0)
           const bGMV = b.count * (bPref.crossRate || 0) * (bPref.ltv || 0)
           if (bGMV !== aGMV) return bGMV - aGMV
 
-          // 6. count 降序
+          // 7. count 降序
           return b.count - a.count
         })
     }
 
+    // Round 1: strict allocation — each audience segment can only be used once
     let changed = true
     while (changed) {
       changed = false
       for (const { live } of scored) {
         const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
-        // 允许超额分配最多 30%，强制分散搭配多个 audience 段
         if (live.exposure >= target * 1.3) continue
-        const candidates = getCandidates(live)
+        const candidates = getCandidates(live, false)
         if (candidates.length > 0) {
           tryAssign(live, candidates[0])
           changed = true
-          // Yield frequently so clicks (e.g. cancel) can be handled
           await new Promise((resolve) => setTimeout(resolve, 0))
         }
       }
-      // Yield to browser so UI stays responsive
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    // Round 2: refill under-target lives with reused segments (3-day gap, max 2/week)
+    // Only lives that haven't reached their target are eligible for reuse
+    changed = true
+    while (changed) {
+      changed = false
+      for (const { live } of scored) {
+        const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+        if (live.exposure >= target) continue
+        const candidates = getCandidates(live, true)
+        if (candidates.length > 0) {
+          tryAssign(live, candidates[0])
+          changed = true
+          await new Promise((resolve) => setTimeout(resolve, 0))
+        }
+      }
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
 

@@ -404,13 +404,23 @@ function isScheduleSheet(sheetJson: any[][]): boolean {
   return dr !== -1
 }
 
+// Fuzzy header matchers for audience sheets (support various column naming conventions)
+const LINE_KEYWORDS = ['线', '线级', '归属线', '线级归属', 'line']
+const CATEGORY_KEYWORDS = ['品类', '品类名', '公海品类', '品类名称', 'category', '科目']
+const COUNT_KEYWORDS = ['用户数', '人数', '存量', '用户量级', '存量人数', 'count', '人数人', '量级', '用户']
+const TIME_KEYWORDS = ['时间', '时间段', '时间范围', '周期', 'time', '时期']
+
+function headerMatches(cols: string[], keywords: string[]): boolean {
+  return cols.some((c) => keywords.some((kw) => c.includes(kw)))
+}
+
 function isAudienceSheet(sheetJson: any[][]): boolean {
   if (sheetJson.length < 3) return false
   for (let r = 0; r < Math.min(sheetJson.length, 5); r++) {
     const row = sheetJson[r]
     if (!row) continue
     const cols = row.map((c: any) => normCell(c))
-    if (cols.includes('线') && cols.includes('品类') && cols.includes('用户数')) return true
+    if (headerMatches(cols, LINE_KEYWORDS) && headerMatches(cols, CATEGORY_KEYWORDS) && headerMatches(cols, COUNT_KEYWORDS)) return true
   }
   return false
 }
@@ -972,9 +982,19 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
 
     const audLines = merged.split('\n').map(l => l.trim()).filter(Boolean)
     let currentTimeRange = ''
+    let isFakeHistory = false
     for (let i = 0; i < audLines.length; i++) {
       const al = audLines[i]
+      if (al.includes('【上次直播排期】') || al.includes('上次排期')) {
+        isFakeHistory = true
+        if (i + 1 < audLines.length && /年.*—/.test(audLines[i + 1])) {
+          currentTimeRange = audLines[i + 1]
+          i++
+        }
+        continue
+      }
       if (al.includes('【存量】')) {
+        isFakeHistory = false
         const remainder = al.replace('【存量】', '').trim()
         if (remainder) {
           currentTimeRange = remainder
@@ -991,7 +1011,14 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
       if (match && currentTimeRange) {
         const category = normalizeCategory(match[1].trim())
         const count = parseInt(match[2], 10)
-        const targetLive = dayLives.find(l => parseLine(l.name) === lineKey) || dayLives[0]
+
+        let targetLive
+        if (isFakeHistory) {
+          targetLive = dayLives.find(l => l.type === 'fake')
+        } else {
+          targetLive = dayLives.find(l => parseLine(l.name) === lineKey) || dayLives[0]
+        }
+
         if (targetLive) {
           targetLive.assignedAudiences.push({
             segmentId: generateId(),
@@ -1017,7 +1044,7 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
     const row = json[r]
     if (!row) continue
     const cols = row.map((c: any) => normCell(c))
-    if (cols.includes('线') && cols.includes('品类') && cols.includes('用户数')) {
+    if (headerMatches(cols, LINE_KEYWORDS) && headerMatches(cols, CATEGORY_KEYWORDS) && headerMatches(cols, COUNT_KEYWORDS)) {
       headerRowIdx = r
       break
     }
@@ -1029,12 +1056,12 @@ function parseAudienceJson(json: any[][]): AudienceSegment[] {
   const timeIndices: number[] = []
   const userCountIndices: number[] = []
 
-  // For each '用户数' column, find the nearest preceding '时间' column
+  // For each count column, find the nearest preceding time column
   for (let j = 3; j < headerRow.length; j++) {
-    if (headerRow[j] === '用户数') {
+    if (COUNT_KEYWORDS.some((kw) => headerRow[j].includes(kw))) {
       let timeIdx = -1
       for (let i = j - 1; i >= 3; i--) {
-        if (headerRow[i] === '时间') {
+        if (TIME_KEYWORDS.some((kw) => headerRow[i].includes(kw))) {
           timeIdx = i
           break
         }
