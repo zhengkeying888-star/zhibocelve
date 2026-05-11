@@ -97,12 +97,15 @@ interface CrossCategoryPref {
 
 ## 业务规则（硬规则）
 
-1. **同线分配**：health 的 audience 只能分配给 health 的直播，beauty→beauty，interest→interest。**跨线分配已彻底移除**。
-2. **跨科直播不能宣发同品类**：如果 `isCrossCategory === true`，不能分配与直播品类属于同一家族的 audience。
-3. **3 天频控**：同一个 audience 段（同品类 + 同时间段）3 天内不能被重复触达。
-4. **30 天伪直播复用**：伪直播复用的 audience 段 30 天内不能被再次复用。
-5. **当日去重**：同一天同一个 audience 段只能分配给一场直播。
-6. **朋友圈资源位不排量级**：`slot === 'friend-circle'` 的直播只做标注，不参与 audience 分配。
+1. **同线分配**：health → health，beauty → beauty，interest → interest。
+2. **联合直播自然跨线**：联合直播涉及多线品类时，允许跨线分配。
+3. **中性品类单直播跨线**：beauty 线 → health 线，仅限 `一杰瑜伽`、`东方养正瑜伽`。
+4. **health / interest 不向外跨线**。
+5. **跨科直播不能宣发同品类**：如果 `isCrossCategory === true`，不能分配与直播品类属于同一家族的 audience。
+6. **3 天频控**：同一个 audience 段 3 天内不能被重复触达。
+7. **30 天伪直播复用**：伪直播复用的 audience 段 30 天内不能被再次复用。
+8. **当日去重**：同一天同一个 audience 段只能分配给一场直播。
+9. **朋友圈资源位不排量级**：`slot === 'friend-circle'` 的直播只做标注，不参与 audience 分配。
 
 ## 品类映射系统
 
@@ -117,11 +120,26 @@ interface CrossCategoryPref {
 ## AutoSchedule 策略
 
 1. 按直播权重排序：`S(100) > A(70) > B(40) > C(20)`，晚间场加分，伪直播历史转化率加分
-2. 同线分配，优先同品类族（垂类）
+2. 同线分配，优先同品类族（垂类，crossRate = 1.0）
 3. **cohort-aware 排序**：在候选人群中，先按 `cohortMonth` 精确匹配 crossRate/LTV，找不到则 fallback 全量平均
-4. 同品类族内按预估GMV（crossRate × LTV）从高到低排序，最后按 count 排序
-5. 每个直播分配 audience 直到达到目标曝光量（S:45w, A:30w, B:20w, C:15w）
-6. 检查所有硬规则冲突
+4. **候选排序（6级优先级）**：
+   - ① 同品类族优先
+   - ② 已分配品类去重（强制分散）
+   - ③ 已分配 timeRange 去重
+   - ④ 超大段降权（超过目标 60% 降低优先级）
+   - ⑤ 预估 GMV = count × crossRate × LTV
+   - ⑥ count 降序
+5. 每个直播分配 audience 直到达到目标曝光量的 **130%**（强制分散搭配多个段）
+6. 目标曝光量（PRD v2.1）：S:350,000 | A:220,000 | B:150,000 | C:120,000
+7. 联合直播目标 = 第一场完整目标 + 后续子直播目标 × 0.5
+8. 检查所有硬规则冲突
+
+## 完成版排期解析
+
+支持解析运营已确认的实际执行排期（正确版排期），其中 audience 分配数据以多行形式嵌入在直播名下方：
+- 健康线 / 变美线 / 兴趣线 audience 可能跨多行，仅首行带线级标签
+- 解析器连续收集同一线级的所有行，按列合并后提取 `(品类, 人数, 时间范围)`
+- 跳过 Excel 时间数字、`【晚间】` 等资源位标注行
 
 ## 归因计算（cohort-aware）
 
