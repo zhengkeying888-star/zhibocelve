@@ -92,6 +92,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   // ========== Cloud Sync ==========
   let isLoadingFromCloud = false
+  let isAutoScheduling = false
 
   function serializeState(): ScheduleState {
     return {
@@ -129,6 +130,10 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
 
   async function loadFromCloud() {
+    if (isAutoScheduling) {
+      console.log('[Cloud] Skipping cloud load during autoSchedule')
+      return
+    }
     isLoadingFromCloud = true
     const state = await loadScheduleState()
     if (state) {
@@ -150,7 +155,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     return () => {
       clearTimeout(timer)
       timer = setTimeout(() => {
-        if (isLoadingFromCloud) return
+        if (isLoadingFromCloud || isAutoScheduling) return
         saveScheduleState(serializeState())
       }, 800)
     }
@@ -595,36 +600,38 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
 
   async function autoSchedule() {
-    // Collect fake-live audiences before reset (for global exclusion)
-    const fakeAudiences = new Set<string>()
-    for (const live of liveStreams.value) {
-      if (live.type === 'fake') {
-        for (const aud of live.assignedAudiences) {
-          fakeAudiences.add(`${aud.category}-${aud.timeRange}`)
+    isAutoScheduling = true
+    try {
+      // Collect fake-live audiences before reset (for global exclusion)
+      const fakeAudiences = new Set<string>()
+      for (const live of liveStreams.value) {
+        if (live.type === 'fake') {
+          for (const aud of live.assignedAudiences) {
+            fakeAudiences.add(`${aud.category}-${aud.timeRange}`)
+          }
         }
       }
-    }
 
-    // Reset: preserve fake-live history data
-    for (const live of liveStreams.value) {
-      if (live.type === 'fake') {
+      // Reset: preserve fake-live history data
+      for (const live of liveStreams.value) {
+        if (live.type === 'fake') {
+          live.conflictReasons = []
+          continue
+        }
+        live.assignedAudiences = []
+        live.exposure = 0
         live.conflictReasons = []
-        continue
       }
-      live.assignedAudiences = []
-      live.exposure = 0
-      live.conflictReasons = []
-    }
-    for (const seg of audienceSegments.value) {
-      const key = `${seg.category}-${seg.timeRange}`
-      if (fakeAudiences.has(key)) {
-        seg.status = 'used'
-      } else {
-        seg.status = 'available'
-        seg.assignedTo = undefined
+      for (const seg of audienceSegments.value) {
+        const key = `${seg.category}-${seg.timeRange}`
+        if (fakeAudiences.has(key)) {
+          seg.status = 'used'
+        } else {
+          seg.status = 'available'
+          seg.assignedTo = undefined
+        }
+        seg.assignedDates = []
       }
-      seg.assignedDates = []
-    }
 
     function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
       const cohortMonth = extractCohortMonth(timeRange)
@@ -863,6 +870,11 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.warn('排期警告:', validation.warnings)
     }
     console.log('排期统计:', validation.stats)
+    } finally {
+      isAutoScheduling = false
+      // Trigger one save after autoSchedule completes
+      triggerSave()
+    }
   }
 
   function loadMockData() {
