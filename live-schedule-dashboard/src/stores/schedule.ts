@@ -849,9 +849,6 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (dates.length >= 2) return false
           if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
 
-          const conflicts = checkConflicts(live, seg)
-          if (conflicts.length > 0) return false
-
           return true
         })
         .sort((a, b) => a.live.exposure - b.live.exposure)
