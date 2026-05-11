@@ -870,6 +870,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.warn('排期警告:', validation.warnings)
     }
     console.log('排期统计:', validation.stats)
+    const totalInventory = audienceSegments.value.reduce((sum, s) => sum + s.count, 0)
+    const totalAssigned = liveStreams.value.filter(l => l.type === 'real').reduce((sum, l) => sum + l.exposure, 0)
+    console.log('【诊断】总库存:', totalInventory, '总触达:', totalAssigned, '段数:', audienceSegments.value.length)
     } finally {
       isAutoScheduling = false
       // Trigger one save after autoSchedule completes
