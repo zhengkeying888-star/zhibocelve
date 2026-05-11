@@ -674,6 +674,18 @@ export const useScheduleStore = defineStore('schedule', () => {
     scored.sort((a, b) => b.score - a.score)
 
     function tryAssign(live: LiveStream, seg: AudienceSegment) {
+      // Defensive: if segment is already assigned to another live, remove it first
+      if (seg.assignedTo && seg.assignedTo !== live.id) {
+        const fromLive = liveStreams.value.find((l) => l.id === seg.assignedTo)
+        if (fromLive) {
+          const idx = fromLive.assignedAudiences.findIndex((a) => a.segmentId === seg.id)
+          if (idx !== -1) {
+            fromLive.exposure -= fromLive.assignedAudiences[idx].count
+            fromLive.assignedAudiences.splice(idx, 1)
+          }
+        }
+      }
+
       const conflicts = checkConflicts(live, seg)
       const assigned: AssignedAudience = {
         segmentId: seg.id,
@@ -812,27 +824,33 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     // Round 3: force-assign remaining available segments to any eligible live
     // Ensures total inventory is fully allocated even if some lives exceed target
+    // Prioritize lives with lowest current exposure to distribute evenly
     for (const seg of audienceSegments.value) {
       if (seg.status !== 'available') continue
-      for (const { live } of scored) {
-        const allowedLines = getAllowedLines(live)
-        if (!allowedLines.has(seg.line)) continue
+      const eligibleLives = scored
+        .filter(({ live }) => {
+          const allowedLines = getAllowedLines(live)
+          if (!allowedLines.has(seg.line)) return false
 
-        const liveCat = normalizeCategory(live.category)
-        const excludedCats = live.isJoint && live.categories
-          ? new Set(live.categories.map((c) => normalizeCategory(c)))
-          : new Set([liveCat])
-        if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) continue
+          const liveCat = normalizeCategory(live.category)
+          const excludedCats = live.isJoint && live.categories
+            ? new Set(live.categories.map((c) => normalizeCategory(c)))
+            : new Set([liveCat])
+          if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
 
-        const dates = seg.assignedDates || []
-        if (dates.length >= 2) continue
-        if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) continue
+          const dates = seg.assignedDates || []
+          if (dates.length >= 2) return false
+          if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
 
-        const conflicts = checkConflicts(live, seg)
-        if (conflicts.length > 0) continue
+          const conflicts = checkConflicts(live, seg)
+          if (conflicts.length > 0) return false
 
-        tryAssign(live, seg)
-        break
+          return true
+        })
+        .sort((a, b) => a.live.exposure - b.live.exposure)
+
+      if (eligibleLives.length > 0) {
+        tryAssign(eligibleLives[0].live, seg)
       }
     }
 
