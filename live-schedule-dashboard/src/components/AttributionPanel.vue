@@ -169,9 +169,17 @@ function formatGMV(n: number): string {
 
           <!-- Footer Summary -->
           <div class="px-6 py-4 border-t border-slate-200 bg-slate-50/50 flex items-center justify-between">
-            <span class="text-xs text-slate-500">
-              共 {{ filteredAttribution.length }} 场直播
-            </span>
+            <div class="flex items-center gap-4">
+              <span class="text-xs text-slate-500">
+                共 {{ filteredAttribution.length }} 场直播
+              </span>
+              <span v-if="store.weeklyScaledTarget > 0" class="text-xs text-slate-400">
+                本周动态目标 {{ (store.weeklyScaledTarget / 10000).toFixed(1) }}w
+                <span v-if="store.scaleFactor !== 1" class="text-amber-600 ml-1">
+                  (缩放 {{ (store.scaleFactor * 100).toFixed(0) }}%)
+                </span>
+              </span>
+            </div>
             <div class="flex items-center gap-6">
               <div class="text-center">
                 <div class="text-[10px] text-slate-500">总触达</div>

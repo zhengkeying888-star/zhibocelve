@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { useScheduleStore } from '@/stores/schedule'
+import { normalizeCategory } from '@/utils/categoryMapping'
 import type { SlotType } from '@/types'
 
 const store = useScheduleStore()
+
+function formatGMV(n: number): string {
+  if (n === 0) return '¥0'
+  if (n >= 10000) return `¥${(n / 10000).toFixed(1)}w`
+  if (n >= 1000) return `¥${(n / 1000).toFixed(1)}k`
+  return `¥${Math.round(n)}`
+}
 
 const slotSections: { slot: SlotType; label: string; ribbonClass: string; textClass: string }[] = [
   { slot: 'morning', label: '早间｜晨练', ribbonClass: 'bg-amber-100 border-amber-200', textClass: 'text-amber-800' },
@@ -97,20 +105,35 @@ function selectLive(id: string) {
 
                 <!-- Cell Content -->
                 <div class="p-3 flex flex-col h-full">
-                  <!-- Header: Time + Grade -->
+                  <!-- Header: Time + Grade + Historical Suggestion -->
                   <div class="flex justify-between items-start mb-2">
                     <span class="text-xs font-mono text-slate-500">{{ live.startTime }}</span>
-                    <span
-                      class="px-1.5 py-0.5 rounded text-[10px] font-bold leading-none border"
-                      :class="{
-                        'bg-amber-50 text-amber-700 border-amber-200': live.grade === 'S',
-                        'bg-blue-50 text-blue-700 border-blue-200': live.grade === 'A',
-                        'bg-sky-50 text-sky-700 border-sky-200': live.grade === 'B',
-                        'bg-gray-50 text-gray-600 border-gray-200': live.grade === 'C',
-                      }"
-                    >
-                      {{ live.grade || '?' }}
-                    </span>
+                    <div class="flex items-center gap-1">
+                      <span
+                        v-if="store.historicalGradeSuggestion[normalizeCategory(live.category)] && store.historicalGradeSuggestion[normalizeCategory(live.category)] !== live.grade"
+                        :title="'历史数据建议：该品类4月平均单场GMV为 ' + formatGMV(store.categoryHistoricalStats[normalizeCategory(live.category)]?.avgGMV || 0)"
+                        class="px-1 py-0.5 rounded text-[9px] font-bold leading-none border border-dashed cursor-help"
+                        :class="{
+                          'bg-amber-50/60 text-amber-600 border-amber-200': store.historicalGradeSuggestion[normalizeCategory(live.category)] === 'S',
+                          'bg-blue-50/60 text-blue-600 border-blue-200': store.historicalGradeSuggestion[normalizeCategory(live.category)] === 'A',
+                          'bg-sky-50/60 text-sky-600 border-sky-200': store.historicalGradeSuggestion[normalizeCategory(live.category)] === 'B',
+                          'bg-gray-50/60 text-gray-500 border-gray-200': store.historicalGradeSuggestion[normalizeCategory(live.category)] === 'C',
+                        }"
+                      >
+                        历{{ store.historicalGradeSuggestion[normalizeCategory(live.category)] }}
+                      </span>
+                      <span
+                        class="px-1.5 py-0.5 rounded text-[10px] font-bold leading-none border"
+                        :class="{
+                          'bg-amber-50 text-amber-700 border-amber-200': live.grade === 'S',
+                          'bg-blue-50 text-blue-700 border-blue-200': live.grade === 'A',
+                          'bg-sky-50 text-sky-700 border-sky-200': live.grade === 'B',
+                          'bg-gray-50 text-gray-600 border-gray-200': live.grade === 'C',
+                        }"
+                      >
+                        {{ live.grade || '?' }}
+                      </span>
+                    </div>
                   </div>
 
                   <!-- Name -->

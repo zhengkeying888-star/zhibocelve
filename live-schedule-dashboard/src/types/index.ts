@@ -115,6 +115,15 @@ export interface LiveAttribution {
   items: AttributionItem[]
 }
 
+export interface CategoryHistoricalStat {
+  avgGMV: number
+  avgExposure: number
+  avgContributionRatio: number
+  avgFirstOrders: number
+  avgConversionRate: number
+  count: number
+}
+
 export interface WeekDay {
   label: string
   date: string

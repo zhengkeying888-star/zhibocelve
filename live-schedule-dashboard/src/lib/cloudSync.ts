@@ -9,6 +9,7 @@ import type {
   LineType,
   GradeType,
   WeekDay,
+  CategoryHistoricalStat,
 } from '@/types'
 
 export interface ScheduleState {
@@ -32,6 +33,7 @@ export interface ScheduleState {
     reason: string
     timestamp: number
   }>
+  categoryHistoricalStats?: Record<string, CategoryHistoricalStat>
 }
 
 const SCHEDULE_ID_KEY = 'schedule.currentId'

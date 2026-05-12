@@ -57,7 +57,11 @@ export const useScheduleStore = defineStore('schedule', () => {
     history: false,
     crossPref: false,
     fakeHistory: false,
+    liveDetail: false,
   })
+
+  // Historical live outcome stats per category (from actual monthly detail sheet)
+  const categoryHistoricalStats = ref<Record<string, import('@/types').CategoryHistoricalStat>>({})
 
   // Category / line / grade mappings (persisted in cloud)
   const categoryGrades = ref<Record<string, GradeType>>({ ...DEFAULT_CATEGORY_GRADES })
@@ -109,6 +113,7 @@ export const useScheduleStore = defineStore('schedule', () => {
       nameOverrides: nameOverrides.value,
       gmvMultiplier: gmvMultiplier.value,
       learnedRules: learnedRules.value,
+      categoryHistoricalStats: categoryHistoricalStats.value,
     }
   }
 
@@ -122,6 +127,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (state.crossPrefs) crossPrefs.value = state.crossPrefs
     if (state.crossCategoryPrefs) crossCategoryPrefs.value = state.crossCategoryPrefs
     if (state.fakeLiveHistory) fakeLiveHistory.value = state.fakeLiveHistory
+    if (state.categoryHistoricalStats) categoryHistoricalStats.value = state.categoryHistoricalStats
     // Merge with defaults so empty cloud state doesn't wipe initialized defaults
     if (state.categoryGrades) categoryGrades.value = { ...DEFAULT_CATEGORY_GRADES, ...state.categoryGrades }
     if (state.categoryLines) categoryLines.value = { ...DEFAULT_CATEGORY_LINES, ...state.categoryLines }
@@ -198,6 +204,47 @@ export const useScheduleStore = defineStore('schedule', () => {
     return audienceSegments.value.filter((a) => a.status === 'available')
   })
 
+  // Weekly target calibration based on historical per-category avg GMV
+  const weeklyRawTarget = computed(() => {
+    let sum = 0
+    for (const live of liveStreams.value) {
+      if (live.type !== 'real') continue
+      const cat = normalizeCategory(live.category)
+      const stat = categoryHistoricalStats.value[cat]
+      if (stat) sum += stat.avgGMV
+    }
+    return sum
+  })
+
+  const scaleFactor = computed(() => {
+    const raw = weeklyRawTarget.value
+    if (raw > 250000) return 250000 / raw
+    if (raw < 200000) return 200000 / raw
+    return 1
+  })
+
+  const weeklyScaledTarget = computed(() => weeklyRawTarget.value * scaleFactor.value)
+
+  // Historical grade suggestions based on avgGMV quartiles across all categories
+  const historicalGradeSuggestion = computed((): Record<string, GradeType> => {
+    const stats = Object.values(categoryHistoricalStats.value)
+    if (stats.length === 0) return {}
+    const avgGMVs = stats.map((s) => s.avgGMV).sort((a, b) => a - b)
+    const p20 = avgGMVs[Math.floor(avgGMVs.length * 0.2)] ?? 0
+    const p50 = avgGMVs[Math.floor(avgGMVs.length * 0.5)] ?? 0
+    const p80 = avgGMVs[Math.floor(avgGMVs.length * 0.8)] ?? 0
+
+    const result: Record<string, GradeType> = {}
+    for (const [cat, stat] of Object.entries(categoryHistoricalStats.value)) {
+      const gmv = stat.avgGMV
+      if (gmv >= p80) result[cat] = 'S'
+      else if (gmv >= p50) result[cat] = 'A'
+      else if (gmv >= p20) result[cat] = 'B'
+      else result[cat] = 'C'
+    }
+    return result
+  })
+
   const uniqueCategories = computed(() => {
     const set = new Set<string>()
     for (const live of liveStreams.value) {
@@ -208,44 +255,102 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   const liveAttribution = computed((): LiveAttribution[] => {
     const result: LiveAttribution[] = []
+    const hasHistoricalData = Object.keys(categoryHistoricalStats.value).length > 0
+
     for (const live of liveStreams.value) {
+      if (live.type !== 'real') continue
       if (live.assignedAudiences.length === 0) continue
       const liveCat = normalizeCategory(live.category)
+      const hist = categoryHistoricalStats.value[liveCat]
       const items: AttributionItem[] = []
       let totalExposure = 0
       let expectedLeads = 0
       let expectedFirstOrders = 0
       let expectedGMV = 0
-      for (const aud of live.assignedAudiences) {
-        const audCat = normalizeCategory(aud.category)
-        const audCohort = extractCohortMonth(aud.timeRange)
-        // 公海品类(from)=audience品类, 跨科品类(to)=直播品类
-        // 优先按 cohortMonth 精确匹配，再 fallback 到全量平均，再 fallback 到家族匹配
-        const pref = findCrossPref(audCat, liveCat, audCohort)
-        const crossRate = pref?.crossRate || 0
-        // 如果 cross-pref 中没有 conversionRate 数据，默认线索全部转化（crossRate 已是整体转化率）
-        const conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
-        const ltv = pref?.ltv || live.ltv || 80
-        const leads = aud.count * crossRate
-        const firstOrders = leads * conversionRate
-        const gmv = firstOrders * ltv * gmvMultiplier.value
-        items.push({
-          segmentId: aud.segmentId,
-          category: aud.category,
-          line: aud.line,
-          count: aud.count,
-          crossRate,
-          conversionRate,
-          ltv,
-          expectedLeads: leads,
-          expectedFirstOrders: firstOrders,
-          expectedGMV: gmv,
-        })
-        totalExposure += aud.count
-        expectedLeads += leads
-        expectedFirstOrders += firstOrders
-        expectedGMV += gmv
+
+      if (hasHistoricalData) {
+        // Unified historical path: all real lives use historical stats when available
+        if (hist) {
+          const liveExpectedGMV = hist.avgGMV * scaleFactor.value
+          const liveExpectedFirstOrders = hist.avgFirstOrders * scaleFactor.value
+          const liveExpectedLeads =
+            hist.avgConversionRate > 0
+              ? (hist.avgFirstOrders / hist.avgConversionRate) * scaleFactor.value
+              : 0
+
+          for (const aud of live.assignedAudiences) {
+            totalExposure += aud.count
+          }
+          for (const aud of live.assignedAudiences) {
+            const ratio = totalExposure > 0 ? aud.count / totalExposure : 0
+            const segGMV = liveExpectedGMV * ratio
+            const segFirstOrders = liveExpectedFirstOrders * ratio
+            const segLeads = liveExpectedLeads * ratio
+            items.push({
+              segmentId: aud.segmentId,
+              category: aud.category,
+              line: aud.line,
+              count: aud.count,
+              crossRate: 0,
+              conversionRate: hist.avgConversionRate,
+              ltv: hist.avgFirstOrders > 0 ? hist.avgGMV / hist.avgFirstOrders : 0,
+              expectedLeads: segLeads,
+              expectedFirstOrders: segFirstOrders,
+              expectedGMV: segGMV,
+            })
+          }
+          expectedGMV = liveExpectedGMV
+          expectedFirstOrders = liveExpectedFirstOrders
+          expectedLeads = liveExpectedLeads
+        } else {
+          // Category has no historical data: zero out to avoid inflated theoretical estimates
+          for (const aud of live.assignedAudiences) {
+            totalExposure += aud.count
+            items.push({
+              segmentId: aud.segmentId,
+              category: aud.category,
+              line: aud.line,
+              count: aud.count,
+              crossRate: 0,
+              conversionRate: 0,
+              ltv: 0,
+              expectedLeads: 0,
+              expectedFirstOrders: 0,
+              expectedGMV: 0,
+            })
+          }
+        }
+      } else {
+        // Fallback to theoretical crossRate × LTV model when no historical data at all
+        for (const aud of live.assignedAudiences) {
+          const audCat = normalizeCategory(aud.category)
+          const audCohort = extractCohortMonth(aud.timeRange)
+          const pref = findCrossPref(audCat, liveCat, audCohort)
+          const crossRate = pref?.crossRate || 0
+          const conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
+          const ltv = pref?.ltv || live.ltv || 80
+          const leads = aud.count * crossRate
+          const firstOrders = leads * conversionRate
+          const gmv = firstOrders * ltv * gmvMultiplier.value
+          items.push({
+            segmentId: aud.segmentId,
+            category: aud.category,
+            line: aud.line,
+            count: aud.count,
+            crossRate,
+            conversionRate,
+            ltv,
+            expectedLeads: leads,
+            expectedFirstOrders: firstOrders,
+            expectedGMV: gmv,
+          })
+          totalExposure += aud.count
+          expectedLeads += leads
+          expectedFirstOrders += firstOrders
+          expectedGMV += gmv
+        }
       }
+
       result.push({
         liveId: live.id,
         name: live.name,
@@ -355,6 +460,10 @@ export const useScheduleStore = defineStore('schedule', () => {
     fakeLiveHistory.value = list
   }
 
+  function setCategoryHistoricalStats(stats: Record<string, import('@/types').CategoryHistoricalStat>) {
+    categoryHistoricalStats.value = stats
+  }
+
   function setLiveGrade(liveId: string, grade: GradeType) {
     const live = liveStreams.value.find((l) => l.id === liveId)
     if (live) live.grade = grade
@@ -461,6 +570,10 @@ export const useScheduleStore = defineStore('schedule', () => {
           const assigned = fromLive.assignedAudiences[idx]
           fromLive.exposure -= assigned.count
           fromLive.assignedAudiences.splice(idx, 1)
+        }
+        // Clean up assignedDates when transferring so reuse limits stay accurate
+        if (seg.assignedDates) {
+          seg.assignedDates = seg.assignedDates.filter((d) => d !== fromLive.date)
         }
       }
       seg.status = 'available'
@@ -676,6 +789,13 @@ export const useScheduleStore = defineStore('schedule', () => {
         )
         if (fakeHist) score += fakeHist.conversionRate * 100
 
+        // Historical GMV weight: higher actual revenue history gets priority
+        const liveCat = normalizeCategory(live.category)
+        const hist = categoryHistoricalStats.value[liveCat]
+        if (hist) {
+          score += Math.min(hist.avgGMV / 20000, 5)
+        }
+
         return { live, score }
       })
 
@@ -690,6 +810,10 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (idx !== -1) {
             fromLive.exposure -= fromLive.assignedAudiences[idx].count
             fromLive.assignedAudiences.splice(idx, 1)
+          }
+          // Clean up assignedDates when transferring so reuse limits stay accurate
+          if (seg.assignedDates) {
+            seg.assignedDates = seg.assignedDates.filter((d) => d !== fromLive.date)
           }
         }
       }
@@ -783,12 +907,21 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bRuleBoost = getRuleBoost(live.category, b.category)
           if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
 
-          // 6. 预估 GMV = count × crossRate × LTV
-          const aPref = getCrossPref(a.category, live.category, a.timeRange)
-          const bPref = getCrossPref(b.category, live.category, b.timeRange)
-          const aGMV = a.count * (aPref.crossRate || 0) * (aPref.ltv || 0)
-          const bGMV = b.count * (bPref.crossRate || 0) * (bPref.ltv || 0)
-          if (bGMV !== aGMV) return bGMV - aGMV
+          // 6. 预估 GMV: prefer history-calibrated ROI per exposure count
+          const hist = categoryHistoricalStats.value[liveCat]
+          if (hist && hist.avgExposure > 0) {
+            const roi = hist.avgGMV / hist.avgExposure
+            const aEff = a.count * roi
+            const bEff = b.count * roi
+            if (bEff !== aEff) return bEff - aEff
+          } else {
+            // Fallback to theoretical crossRate × LTV model
+            const aPref = getCrossPref(a.category, live.category, a.timeRange)
+            const bPref = getCrossPref(b.category, live.category, b.timeRange)
+            const aGMV = a.count * (aPref.crossRate || 0) * (aPref.ltv || 0)
+            const bGMV = b.count * (bPref.crossRate || 0) * (bPref.ltv || 0)
+            if (bGMV !== aGMV) return bGMV - aGMV
+          }
 
           // 7. count 降序
           return b.count - a.count
@@ -870,7 +1003,8 @@ export const useScheduleStore = defineStore('schedule', () => {
     console.log('排期统计:', validation.stats)
     const totalInventory = audienceSegments.value.reduce((sum, s) => sum + s.count, 0)
     const totalAssigned = liveStreams.value.filter(l => l.type === 'real').reduce((sum, l) => sum + l.exposure, 0)
-    console.log('【诊断】总库存:', totalInventory, '总触达:', totalAssigned, '段数:', audienceSegments.value.length)
+    const remaining = audienceSegments.value.filter(s => s.status === 'available').reduce((sum, s) => sum + s.count, 0)
+    console.log('【诊断】总库存:', totalInventory, '总触达:', totalAssigned, '剩余:', remaining, '段数:', audienceSegments.value.length)
     } finally {
       isAutoScheduling = false
       // Force-save immediately so cloud gets the fresh result before re-enabling sync
@@ -1044,6 +1178,10 @@ export const useScheduleStore = defineStore('schedule', () => {
     availableAudience,
     uniqueCategories,
     liveAttribution,
+    weeklyScaledTarget,
+    scaleFactor,
+    historicalGradeSuggestion,
+    categoryHistoricalStats,
     setSelectedLive,
     updateUploadStatus,
     setLiveStreams,
@@ -1054,6 +1192,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     setCrossPrefs,
     setCrossCategoryPrefs,
     setFakeLiveHistory,
+    setCategoryHistoricalStats,
     setLiveGrade,
     setLiveCategory,
     setLiveLine,

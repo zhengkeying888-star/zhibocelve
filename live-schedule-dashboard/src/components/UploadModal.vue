@@ -5,6 +5,7 @@ import {
   parseScheduleWorkbook,
   parseAudienceSheet,
   parseCrossPrefSheet,
+  parseLiveDetailSheet,
 } from '@/utils/parser'
 
 const props = defineProps<{ open: boolean }>()
@@ -38,6 +39,7 @@ const files = ref<FileItem[]>([
   { key: 'schedule', label: '直播排期表', desc: '直播组提供的一周直播排期（含历史sheet，系统自动追溯）', required: true, file: null, status: 'idle' },
   { key: 'audience', label: '用户量级表', desc: '各品类各时间段阶梯的存量用户数（若排期文件中已包含可跳过）', required: false, file: null, status: 'idle' },
   { key: 'crossPref', label: '跨科偏好数据', desc: '转继承新增用户day60跨科品类.xlsx', required: false, file: null, status: 'idle' },
+  { key: 'liveDetail', label: '4月直播明细表', desc: '包含实际GMV、单场贡献占比的历史明细（用于校准归因模型）', required: false, file: null, status: 'idle' },
 ])
 
 const overallStatus = ref<'idle' | 'parsing' | 'done'>('idle')
@@ -113,8 +115,13 @@ async function handleSubmit() {
           if (result.crossCategoryPrefs.length > 0) store.setCrossCategoryPrefs(result.crossCategoryPrefs)
           break
         }
+        case 'liveDetail': {
+          const stats = parseLiveDetailSheet(buffer)
+          store.setCategoryHistoricalStats(stats)
+          break
+        }
       }
-      const validKeys = ['schedule', 'audience', 'history', 'crossPref', 'fakeHistory'] as const
+      const validKeys = ['schedule', 'audience', 'history', 'crossPref', 'fakeHistory', 'liveDetail'] as const
       type UploadKey = typeof validKeys[number]
       if (validKeys.includes(item.key as UploadKey)) {
         store.updateUploadStatus(item.key as UploadKey, true)

@@ -145,6 +145,36 @@ function inferCategory(name: string): string {
   if (s.includes('摄影')) return '手机摄影'
   if (s.includes('唱歌')) return '唱歌'
   if (s.includes('短视频')) return '短视频'
+  if (s.includes('朗诵')) return '国学朗诵'
+  if (s.includes('茶道')) return '茶道'
+  if (s.includes('编织') || s.includes('钩针')) return '编织工艺美学'
+  if (s.includes('穿搭')) return '穿搭'
+  if (s.includes('国画')) return '国画1'
+  if (s.includes('声乐')) return '声乐'
+  if (s.includes('电子琴') || s.includes('键盘')) return '电子琴'
+  if (s.includes('书法')) return '真书法'
+  if (s.includes('油画')) return '油画'
+  if (s.includes('戏曲')) return '戏曲'
+  if (s.includes('舞蹈')) return '舞蹈'
+  if (s.includes('易筋经')) return '易筋经'
+  if (s.includes('气血')) return '气血调理'
+  if (s.includes('固气')) return '固气活血'
+  if (s.includes('养生')) return '古法居家养生'
+  if (s.includes('食养')) return '健康食养'
+  if (s.includes('营养')) return '营养调理'
+  if (s.includes('儿童')) return '儿童健康'
+  if (s.includes('体态')) return '体态'
+  if (s.includes('形体')) return '形体芭蕾'
+  if (s.includes('面部')) return '面部瑜伽驻颜'
+  if (s.includes('懒人')) return '懒人吃瘦'
+  if (s.includes('东方食养')) return '东方食养'
+  if (s.includes('亚健')) return '亚健康管理'
+  if (s.includes('私域')) return '私域'
+  if (s.includes('轻训')) return '轻训营'
+  if (s.includes('家厨')) return '健康家厨'
+  if (s.includes('养正')) return '东方养正瑜伽'
+  if (s.includes('焕醒') || s.includes('晨练')) return '瑜伽'
+  if (s.includes('节气')) return '健康营养'
   return name
 }
 
@@ -724,7 +754,87 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   return { crossPrefs, crossCategoryPrefs }
 }
 
-// ====== 5. Unified workbook parser ======
+// ====== 5. Parse Live Detail Sheet (historical actual outcomes) ======
+export function parseLiveDetailSheet(
+  buffer: ArrayBuffer
+): Record<string, import('@/types').CategoryHistoricalStat> {
+  const workbook = XLSX.read(buffer, { type: 'array' })
+  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]
+  if (rows.length < 2) return {}
+
+  const headers = rows[0].map((h: any) => normCell(h))
+  const nameIdx = headers.findIndex((h) => h.includes('公开课名称') || h.includes('直播名称'))
+  const catIdx = headers.findIndex((h) => h === '品类' || h.includes('品类'))
+  const statusIdx = headers.findIndex((h) => h.includes('直播状态名称'))
+  const isTestIdx = headers.findIndex((h) => h.includes('是否新用户测试直播') || h.includes('新量测试'))
+  const gmvIdx = headers.findIndex((h) => h === '总gmv' || h.includes('总gmv'))
+  const exposureIdx = headers.findIndex((h) => h.includes('曝光人数'))
+  const ratioIdx = headers.findIndex(
+    (h) => h.includes('首单贡献占比') || h.includes('单场贡献占比') || h.includes('贡献占比')
+  )
+  const firstOrdersIdx = headers.findIndex((h) => h.includes('首单订单数'))
+  const conversionRateIdx = headers.findIndex((h) => h.includes('首单转化率'))
+
+  // Accumulators per normalized category
+  const acc = new Map<
+    string,
+    { gmvSum: number; exposureSum: number; ratioSum: number; firstOrdersSum: number; conversionRateSum: number; count: number }
+  >()
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row) continue
+
+    const name = normCell(row[nameIdx >= 0 ? nameIdx : 1])
+    const status = normCell(row[statusIdx >= 0 ? statusIdx : 5])
+    const isTest = normCell(row[isTestIdx >= 0 ? isTestIdx : 3])
+
+    // Skip new-user test lives and replay rows
+    if (isTest === '是' || status === '回放') continue
+    if (!name) continue
+
+    // Prefer explicit category column if present; fallback to inferring from live name
+    const rawCategory = catIdx >= 0 ? normCell(row[catIdx]) : ''
+    const category = rawCategory ? normalizeCategory(rawCategory) : inferCategory(name)
+    if (!category) continue
+
+    const gmv = Number(row[gmvIdx >= 0 ? gmvIdx : -1]) || 0
+    const exposure = Number(row[exposureIdx >= 0 ? exposureIdx : -1]) || 0
+    const ratio = Number(row[ratioIdx >= 0 ? ratioIdx : -1]) || 0
+    const firstOrders = Number(row[firstOrdersIdx >= 0 ? firstOrdersIdx : -1]) || 0
+    const conversionRate = Number(row[conversionRateIdx >= 0 ? conversionRateIdx : -1]) || 0
+
+    const existing = acc.get(category)
+    if (existing) {
+      existing.gmvSum += gmv
+      existing.exposureSum += exposure
+      existing.ratioSum += ratio
+      existing.firstOrdersSum += firstOrders
+      existing.conversionRateSum += conversionRate
+      existing.count += 1
+    } else {
+      acc.set(category, { gmvSum: gmv, exposureSum: exposure, ratioSum: ratio, firstOrdersSum: firstOrders, conversionRateSum: conversionRate, count: 1 })
+    }
+  }
+
+  const result: Record<string, import('@/types').CategoryHistoricalStat> = {}
+  for (const [category, data] of acc.entries()) {
+    if (data.count === 0) continue
+    result[category] = {
+      avgGMV: data.gmvSum / data.count,
+      avgExposure: data.exposureSum / data.count,
+      avgContributionRatio: data.ratioSum / data.count,
+      avgFirstOrders: data.firstOrdersSum / data.count,
+      avgConversionRate: data.conversionRateSum / data.count,
+      count: data.count,
+    }
+  }
+
+  return result
+}
+
+// ====== 6. Unified workbook parser ======
 export function parseScheduleWorkbook(buffer: ArrayBuffer, fileName?: string): {
   lives: LiveStream[]
   weekDays: WeekDay[]
