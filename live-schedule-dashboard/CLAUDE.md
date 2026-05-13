@@ -7,10 +7,11 @@
 1. 上传排期 Excel → 系统解析出本周直播场次
 2. 上传 audience 量级表 → 系统获得各品类各时间段的存量用户数
 3. 上传跨科偏好数据 → 系统获得品类→品类的 day60 跨科率 + LTV（含 cohortMonth）
-4. 系统自动按规则分配 audience（自动排期）
-5. 运营可在看板上手动校准品类、线级、评级、人群分配
-6. **拖拽调整后系统记录规则，下次自动应用**
-7. 导出排期结果回 Excel
+4. **上传 4月直播明细表 → 系统用实际历史 GMV 校准预估模型**
+5. 系统自动按规则分配 audience（自动排期）
+6. 运营可在看板上手动校准品类、线级、评级、人群分配
+7. **拖拽调整后系统记录规则，下次自动应用**
+8. 导出排期结果回 Excel
 
 ## 技术栈
 
@@ -19,7 +20,7 @@
 - Pinia (state management)
 - Tailwind CSS v4
 - xlsx (SheetJS) — Excel 解析/导出
-- 纯前端，localStorage 持久化配置
+- Supabase — 云端同步（可选，未配置时降级到 localStorage）
 
 ## 目录结构
 
@@ -27,21 +28,25 @@
 src/
   components/
     UploadBar.vue                — 顶部工具栏（上传、自动排期、导出、归因入口）
-    UploadModal.vue              — 上传文件弹窗（排期表 / audience表 / 跨科偏好表）
+    UploadModal.vue              — 上传文件弹窗（排期表 / audience表 / 跨科偏好表 / 直播明细表）
     LivePool.vue                 — 直播卡片列表（可编辑品类/线级/评级，支持接收拖拽）
     DetailPanel.vue              — 右侧详情面板（已分配 audience + 人群库存 + 归因数据，支持拖拽转移）
     CategoryManager.vue          — 品类评级管理弹窗
     AttributionPanel.vue         — 全局排期归因看板弹窗
+    WeekBoard.vue                — 周度排期矩阵看板（直播卡片 + 历史等级推荐标签）
     GlobalAudiencePanel.vue      — 左侧全局人群面板（智能推荐 + 按 cohortMonth 展开的库存树）
     AdjustmentFeedbackModal.vue  — 拖拽调整后的自然语言反馈弹窗（记录规则）
   stores/
     schedule.ts                  — 核心 Pinia store（状态、计算属性、actions、autoSchedule）
   utils/
-    parser.ts                    — Excel 解析（排期矩阵、audience sheet、跨科偏好、历史记录）
+    parser.ts                    — Excel 解析（排期矩阵、audience sheet、跨科偏好、历史记录、直播明细表）
     exporter.ts                  — Excel 导出
     categoryMapping.ts           — 标准品类映射 + normalizeCategory 函数
   types/
     index.ts                     — TypeScript 类型定义
+  lib/
+    cloudSync.ts                 — Supabase 云端同步封装
+    defaultCategoryMappings.ts   — 默认品类线级/评级映射
 ```
 
 ## 核心数据模型
@@ -65,6 +70,10 @@ interface LiveStream {
   exposure: number
   conflictReasons: string[]
   isCrossCategory: boolean   // true = 跨科直播（不能宣发同品类 audience）
+  isJoint?: boolean          // 联合直播
+  categories?: string[]      // 联合直播子品类列表
+  lines?: LineType[]         // 联合直播涉及的线级去重列表
+  target?: number            // 动态计算的目标曝光量
 }
 ```
 
@@ -78,6 +87,8 @@ interface AudienceSegment {
   timeRange: string      // 如 "2025.1.12-2026.4.26"
   count: number
   status: 'available' | 'used'
+  assignedTo?: string    // 分配到的 liveId
+  assignedDates?: string[] // 当前周被分配的日期（最多2个）
 }
 ```
 
@@ -94,6 +105,21 @@ interface CrossCategoryPref {
   ltv: number            // day60 LTV（直播间优先，fallback 导量）
 }
 ```
+
+### 历史统计数据 (CategoryHistoricalStat)
+
+```typescript
+interface CategoryHistoricalStat {
+  avgGMV: number              // 单场平均 GMV
+  avgExposure: number         // 单场平均曝光人数
+  avgContributionRatio: number // 单场平均贡献占比
+  avgFirstOrders: number      // 单场平均首单订单数
+  avgConversionRate: number   // 单场平均首单转化率
+  count: number               // 历史直播场次数
+}
+```
+
+由 `parseLiveDetailSheet()` 从 4 月直播明细表解析生成，按标准品类聚合。
 
 ## 业务规则（硬规则）
 
@@ -119,20 +145,115 @@ interface CrossCategoryPref {
 
 ## AutoSchedule 策略
 
-1. 按直播权重排序：`S(100) > A(70) > B(40) > C(20)`，晚间场加分，伪直播历史转化率加分
-2. 同线分配，优先同品类族（垂类，crossRate = 1.0）
-3. **cohort-aware 排序**：在候选人群中，先按 `cohortMonth` 精确匹配 crossRate/LTV，找不到则 fallback 全量平均
-4. **候选排序（6级优先级）**：
-   - ① 同品类族优先
-   - ② 已分配品类去重（强制分散）
-   - ③ 已分配 timeRange 去重
-   - ④ 超大段降权（超过目标 60% 降低优先级）
-   - ⑤ 预估 GMV = count × crossRate × LTV
-   - ⑥ count 降序
-5. 每个直播分配 audience 直到达到目标曝光量的 **130%**（强制分散搭配多个段）
-6. 目标曝光量（PRD v2.1）：S:350,000 | A:220,000 | B:150,000 | C:120,000
-7. 联合直播目标 = 第一场完整目标 + 后续子直播目标 × 0.5
-8. 检查所有硬规则冲突
+### 1. 直播优先级排序（scored）
+
+```typescript
+score = GRADE_SCORE[grade] + slot_bonus + fake_hist_bonus + historical_gmv_bonus
+GRADE_SCORE = {'S': 100, 'A': 70, 'B': 40, 'C': 20, null: 10}
+slot_bonus: evening +50, morning +30, other +10
+fake_hist_bonus: fakeLiveHistory.conversionRate × 100
+historical_gmv_bonus: Math.min(avgGMV / 20_000, 5)   // 封顶 +5
+```
+
+按 score 降序排列：高等级 + 晚间场 + 伪直播历史好 + 历史产值高 的直播优先获得 audience。
+
+### 2. 候选排序（getCandidates，7级优先级）
+
+1. **同品类族优先**（垂类，crossRate = 1.0）
+2. **已分配品类去重**（强制分散）
+3. **已分配 timeRange 去重**（进一步分散）
+4. **超大段降权**（超过目标 60% 降低优先级）
+5. **已学习的规则匹配优先**（learnedRules）
+6. **预估 GMV 降序**：
+   - **有历史数据**：`count × (avgGMV / avgExposure)`（每触达一人的历史产值效率）
+   - **无历史数据回退**：`count × crossRate × LTV`
+7. **count 降序**
+
+### 3. 分配轮次
+
+- **Round 1（严格分配）**：只选 `assignedDates.length === 0` 的段
+- **Round 2（refill）**：对未达 target 的直播，允许复用，但要求 `daysBetween >= 3` 且 `assignedDates.length < 2`
+- **Round 3（force-fill）**：将剩余可用段强制分配给最缺曝光的直播
+
+### 4. 停止条件
+
+达到目标曝光的 **130%** 后停止（强制分散搭配多个段）。
+
+### 5. 目标曝光量
+
+| 评级 | 目标曝光 |
+|---|---|
+| S | 350,000 |
+| A | 220,000 |
+| B | 150,000 |
+| C | 120,000 |
+
+联合直播目标 = 第一场完整目标 + 后续子直播目标 × 0.5
+
+## 动态目标缩放（Dynamic Scaling）
+
+当上传了 4 月直播明细表后，系统启用动态缩放：
+
+1. **原始预估**：`weeklyRawTarget = Σ(当周各 real live 对应品类的 avgGMV)`
+2. **缩放系数**：
+   - `raw > 250,000` → `scaleFactor = 250,000 / raw`
+   - `raw < 200,000` → `scaleFactor = 200,000 / raw`
+   - 否则 → `scaleFactor = 1`
+3. **校准后目标**：`weeklyScaledTarget = raw × scaleFactor`
+
+单场预估 GMV = `avgGMV × scaleFactor`，按 audience count 比例分摊。
+
+## 归因计算（Attribution）
+
+### 统一历史路径（当 categoryHistoricalStats 非空时）
+
+**所有 real live 统一使用历史口径**，不再为个别无历史数据的品类回退到理论模型。
+
+**有历史数据的品类**：
+```
+expectedGMV         = avgGMV × scaleFactor
+expectedFirstOrders = avgFirstOrders × scaleFactor
+expectedLeads       = (avgFirstOrders / avgConversionRate) × scaleFactor   // avgConversionRate > 0
+```
+按各 assigned audience 的 `count / totalExposure` 比例分摊到 segment 级别。
+
+**无历史数据的品类**：
+```
+expectedGMV = 0
+expectedFirstOrders = 0
+expectedLeads = 0
+```
+
+### 理论模型回退（当 categoryHistoricalStats 为空时）
+
+```
+expectedLeads       = Σ(audience.count × crossRate)
+expectedFirstOrders = Σ(expectedLeads × conversionRate)
+expectedGMV         = Σ(expectedFirstOrders × ltv)
+```
+
+**匹配优先级**：
+1. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat && cohortMonth === extractCohortMonth(aud.timeRange)`（精确匹配）
+2. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat`（全量平均 fallback）
+3. 默认 zero
+
+## 历史等级推荐（Historical Grade Suggestion）
+
+基于所有有历史数据品类的 `avgGMV` 计算四分位数：
+
+```typescript
+const avgGMVs = stats.map(s => s.avgGMV).sort((a, b) => a - b)
+const p20 = avgGMVs[Math.floor(avgGMVs.length * 0.2)]
+const p50 = avgGMVs[Math.floor(avgGMVs.length * 0.5)]
+const p80 = avgGMVs[Math.floor(avgGMVs.length * 0.8)]
+
+if (avgGMV >= p80) → 'S'
+else if (avgGMV >= p50) → 'A'
+else if (avgGMV >= p20) → 'B'
+else → 'C'
+```
+
+在 `WeekBoard.vue` 直播卡片上显示「历S/历A/历B/历C」标签（仅当与当前 grade 不一致时）。
 
 ## 完成版排期解析
 
@@ -140,21 +261,6 @@ interface CrossCategoryPref {
 - 健康线 / 变美线 / 兴趣线 audience 可能跨多行，仅首行带线级标签
 - 解析器连续收集同一线级的所有行，按列合并后提取 `(品类, 人数, 时间范围)`
 - 跳过 Excel 时间数字、`【晚间】` 等资源位标注行
-
-## 归因计算（cohort-aware）
-
-对每个直播的 `assignedAudiences`：
-
-```
-expectedLeads = Σ(audience.count × crossRate)
-expectedFirstOrders = Σ(expectedLeads × conversionRate)
-expectedGMV = Σ(expectedFirstOrders × ltv)
-```
-
-**匹配优先级**：
-1. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat && cohortMonth === extractCohortMonth(aud.timeRange)`（精确匹配）
-2. `normalizeCategory(fromCategory) === audCat && normalizeCategory(toCategory) === liveCat`（全量平均 fallback）
-3. 默认 zero
 
 ## 人工调适与规则学习
 
@@ -164,7 +270,9 @@ expectedGMV = Σ(expectedFirstOrders × ltv)
 - 悬停时直播卡片高亮，释放后执行分配
 
 ### 智能推荐
-选中直播后，左侧「智能推荐」区显示所有可宣发人群，按 `预估GMV = 库存 × crossRate × LTV` 降序排列：
+选中直播后，左侧「智能推荐」区显示所有可宣发人群：
+- **有历史数据**：按 `预估GMV = 库存 × (avgGMV / avgExposure)` 降序排列
+- **无历史数据**：按 `预估GMV = 库存 × crossRate × LTV` 降序排列
 - 同品类族（垂类）高亮
 - 显示 cohortMonth、crossRate、LTV
 - 无直播间数据时 fallback 导量，标灰提示
@@ -173,15 +281,16 @@ expectedGMV = Σ(expectedFirstOrders × ltv)
 拖拽/点击分配后弹出 `AdjustmentFeedbackModal`：
 - 显示调整前后的 GMV 对比
 - 自然语言输入框（如"中医变美跨科率太低，瑜伽更匹配"）
-- 点击「确认并记录」存入 `learnedRules`（localStorage）
-- 下次 `autoSchedule` 时可扫描规则调整排序权重
+- 点击「确认并记录」存入 `learnedRules`（localStorage + Cloud Sync）
+- 下次 `autoSchedule` 时第 5 级优先级应用规则匹配
 
 ## 持久化
 
-- `schedule.categoryGrades` — 品类手动评级 (localStorage)
-- `schedule.categoryLines` — 品类线级覆盖 (localStorage)
-- `schedule.nameOverrides` — 按直播名记忆的品类/线级 (localStorage)
-- `schedule.learnedRules` — 人工调整沉淀的规则 (localStorage / cloud sync)
+- `schedule.categoryGrades` — 品类手动评级 (localStorage + Cloud)
+- `schedule.categoryLines` — 品类线级覆盖 (localStorage + Cloud)
+- `schedule.nameOverrides` — 按直播名记忆的品类/线级 (localStorage + Cloud)
+- `schedule.learnedRules` — 人工调整沉淀的规则 (localStorage + Cloud)
+- `schedule.categoryHistoricalStats` — 历史统计数据 (localStorage + Cloud，v2.3 新增)
 
 ## 开发命令
 
@@ -199,3 +308,4 @@ npm run preview  # 预览构建产物
 - 修改品类映射后需要重新上传数据或点击「应用到所有场次」+「重新生成排期」
 - 构建输出在 `dist/` 目录，可部署到任何静态托管服务
 - **跨科偏好文件格式**：必须包含 `转继承添加好友月份` 列作为第0列，系统按此列提取 `cohortMonth`
+- **4月直播明细表格式**：必须包含「品类」或「公开课名称」用于映射，「总gmv」「曝光人数」用于统计。上传后系统强制走统一历史路径，无历史数据的品类 GMV 将显示为 0
