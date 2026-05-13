@@ -80,6 +80,9 @@ export async function saveScheduleState(state: ScheduleState): Promise<void> {
     if (state.learnedRules) {
       localStorage.setItem('schedule.learnedRules', JSON.stringify(state.learnedRules))
     }
+    if (state.categoryHistoricalStats && Object.keys(state.categoryHistoricalStats).length > 0) {
+      localStorage.setItem('schedule.categoryHistoricalStats', JSON.stringify(state.categoryHistoricalStats))
+    }
     return
   }
 

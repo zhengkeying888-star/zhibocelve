@@ -15,6 +15,16 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10)
 }
 
+function parseCleanNumber(val: any): number {
+  if (typeof val === 'number') return val
+  if (!val) return 0
+  const cleaned = String(val)
+    .replace(/[¥,$\s]/g, '')
+    .replace(/,/g, '')
+  const num = Number(cleaned)
+  return isNaN(num) ? 0 : num
+}
+
 function parseLine(lineStr: string): LineType {
   // First try the canonical mapping
   const line = parseLineFromCategory(lineStr)
@@ -799,11 +809,11 @@ export function parseLiveDetailSheet(
     const category = rawCategory ? normalizeCategory(rawCategory) : inferCategory(name)
     if (!category) continue
 
-    const gmv = Number(row[gmvIdx >= 0 ? gmvIdx : -1]) || 0
-    const exposure = Number(row[exposureIdx >= 0 ? exposureIdx : -1]) || 0
-    const ratio = Number(row[ratioIdx >= 0 ? ratioIdx : -1]) || 0
-    const firstOrders = Number(row[firstOrdersIdx >= 0 ? firstOrdersIdx : -1]) || 0
-    const conversionRate = Number(row[conversionRateIdx >= 0 ? conversionRateIdx : -1]) || 0
+    const gmv = parseCleanNumber(row[gmvIdx >= 0 ? gmvIdx : -1])
+    const exposure = parseCleanNumber(row[exposureIdx >= 0 ? exposureIdx : -1])
+    const ratio = parseCleanNumber(row[ratioIdx >= 0 ? ratioIdx : -1])
+    const firstOrders = parseCleanNumber(row[firstOrdersIdx >= 0 ? firstOrdersIdx : -1])
+    const conversionRate = parseCleanNumber(row[conversionRateIdx >= 0 ? conversionRateIdx : -1])
 
     const existing = acc.get(category)
     if (existing) {
@@ -830,6 +840,11 @@ export function parseLiveDetailSheet(
       count: data.count,
     }
   }
+
+  console.log('[LiveDetail] Parsed headers:', headers)
+  console.log('[LiveDetail] Found columns:', { nameIdx, catIdx, statusIdx, isTestIdx, gmvIdx, exposureIdx, firstOrdersIdx, conversionRateIdx })
+  console.log('[LiveDetail] Parsed categories:', Object.keys(result))
+  console.log('[LiveDetail] Sample stats:', Object.entries(result).slice(0, 3))
 
   return result
 }

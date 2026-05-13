@@ -152,6 +152,11 @@ export const useScheduleStore = defineStore('schedule', () => {
       categoryLines.value = { ...DEFAULT_CATEGORY_LINES, ...loadFromStorage('schedule.categoryLines', {}) }
       nameOverrides.value = loadFromStorage('schedule.nameOverrides', {})
       learnedRules.value = loadFromStorage('schedule.learnedRules', [])
+      const savedStats = loadFromStorage<Record<string, import('@/types').CategoryHistoricalStat>>('schedule.categoryHistoricalStats', {})
+      if (Object.keys(savedStats).length > 0) {
+        categoryHistoricalStats.value = savedStats
+        console.log('[Local] Loaded categoryHistoricalStats:', Object.keys(savedStats))
+      }
     }
     isLoadingFromCloud = false
   }
@@ -462,6 +467,8 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   function setCategoryHistoricalStats(stats: Record<string, import('@/types').CategoryHistoricalStat>) {
     categoryHistoricalStats.value = stats
+    console.log('[Store] categoryHistoricalStats set:', Object.keys(stats))
+    console.log('[Store] categoryHistoricalStats sample:', Object.entries(stats).slice(0, 3))
   }
 
   function setLiveGrade(liveId: string, grade: GradeType) {
