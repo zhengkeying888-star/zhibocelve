@@ -1,7 +1,7 @@
 # 直播排期策略看板 — 产品需求文档 (PRD)
 
 > 版本：v2.3
-> 日期：2026-05-12
+> 日期：2026-05-13
 > 适用范围：5月W2（5.11–5.17）及后续周次
 > 关联仓库：`live-schedule-dashboard` + `schedule_solver.py`
 
@@ -72,11 +72,12 @@
 
 **4月直播明细表格式**：
 ```
-| 公开课名称 | 品类 | 直播状态名称 | 是否新用户测试直播 | 曝光人数 | 总gmv | 首单贡献占比 | 首单订单数 | 首单转化率 |
+| 公开课名称 | 直播品类 | 直播状态名称 | 是否新用户测试直播 | 曝光人数 | 总gmv | 首单贡献占比 | 首单订单数 | 首单转化率 |
 ```
 解析逻辑：
 - 剔除 `是否新用户测试直播 = '是'` 和 `直播状态名称 = '回放'` 的行。
-- 品类映射：优先使用「品类」列；若为空，从「公开课名称」推断。
+- 品类映射：优先使用「直播品类」列；若为空，从「公开课名称」推断。
+- **数字清洗（v2.3 修复）**：支持 `¥35,000`、`12,500` 等带货币符号/千分位逗号的格式，自动清洗后解析。
 - 按标准品类聚合计算 `avgGMV`、`avgExposure`、`avgFirstOrders`、`avgConversionRate`、`avgContributionRatio`。
 
 **完成版排期解析**：
@@ -570,7 +571,7 @@ if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
 | v2.0 | 联合直播模型、严格同品类族、跨线规则、伪直播处理、时间段合并 | ✅ |
 | v2.1 | 规则学习智能体、完成版排期解析、Cloud Sync、autoSchedule 校准（7级排序+130%目标） | ✅ |
 | v2.2 | 严格频控实现（assignedDates 机制）、总触达排除伪直播、品类映射前缀别名扩充 | ✅ |
-| **v2.3** | **历史数据归因模型**：4月直播明细表解析、动态目标缩放（20–25w）、统一历史路径归因、历史等级推荐、autoSchedule 历史权重 | **✅ 当前版本** |
+| **v2.3** | **历史数据归因模型**：4月直播明细表解析（含数字清洗 `¥35,000`/`12,500`）、动态目标缩放（20–25w）、统一历史路径归因、历史等级推荐、autoSchedule 历史权重、localStorage 持久化 `categoryHistoricalStats` | **✅ 当前版本** |
 | v2.4 | 历史数据趋势分析（多月滚动平均）、排期效果对比、规则学习效果评估 | 待开发 |
 | v2.5 | 多周排期批量管理、智能推荐优化（基于 learnedRules 的权重自适应） | 待开发 |
 
@@ -595,4 +596,4 @@ if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
 | v1.1 | 2026-05-07 | cohort-aware 归因、智能推荐面板、拖拽调整 |
 | v2.0 | 2026-05-08 | 联合直播模型、严格同品类族、跨线规则（中性品类 beauty→health）、伪直播处理、时间段合并、完成版排期解析 |
 | v2.1 | 2026-05-11 | 规则学习智能体（learnedRules 记录+应用）、Cloud Sync（Supabase 云端同步）、7级候选排序（加入规则匹配优先级）、130%目标超额分配、联合直播目标修正（第一场完整+后续×0.5）、品类默认值防覆盖（merge defaults）、前缀别名增强 |
-| **v2.3** | **2026-05-12** | **历史数据归因模型**：4月直播明细表上传与解析、`CategoryHistoricalStat` 统计（avgGMV/avgExposure/avgFirstOrders/avgConversionRate）、**动态目标缩放**（weeklyRawTarget → scaleFactor → 20–25w）、**统一历史路径归因**（有历史用历史，无历史归零，不再回退理论模型）、**历史等级推荐**（历S/A/B/C 四分位数标签）、**autoSchedule 历史权重**（scored 加分 + candidate 历史 ROI 排序） |
+| **v2.3** | **2026-05-13** | **历史数据归因模型**：4月直播明细表上传与解析（支持 `¥35,000`/`12,500` 数字清洗）、`CategoryHistoricalStat` 统计（avgGMV/avgExposure/avgFirstOrders/avgConversionRate）、**动态目标缩放**（weeklyRawTarget → scaleFactor → 20–25w）、**统一历史路径归因**（有历史用历史，无历史归零，不再回退理论模型）、**历史等级推荐**（历S/A/B/C 四分位数标签）、**autoSchedule 历史权重**（scored 加分 + candidate 历史 ROI 排序）、**localStorage 持久化** `categoryHistoricalStats` |
