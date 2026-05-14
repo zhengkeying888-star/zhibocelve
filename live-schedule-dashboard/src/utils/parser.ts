@@ -1140,6 +1140,28 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
         let targetLive
         if (isFakeHistory) {
           targetLive = dayLives.find(l => l.type === 'fake')
+          if (!targetLive) {
+            targetLive = {
+              id: generateId(),
+              name: '上次直播记录',
+              startTime: currentSlot.includes('morning') ? '07:30' : '19:00',
+              endTime: currentSlot.includes('morning') ? '09:00' : '22:00',
+              date: day.date,
+              type: 'fake',
+              category: '',
+              line: lineKey,
+              slot: currentSlot,
+              grade: null,
+              owner: '',
+              assignedAudiences: [],
+              exposure: 0,
+              conflictReasons: [],
+              isRecommended: false,
+              isCrossCategory: false,
+            } as unknown as LiveStream
+            lives.push(targetLive)
+            dayLives.push(targetLive)
+          }
         } else {
           targetLive = dayLives.find(l => parseLine(l.name) === lineKey) || dayLives[0]
         }
