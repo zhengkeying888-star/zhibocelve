@@ -723,35 +723,38 @@ export const useScheduleStore = defineStore('schedule', () => {
     isAutoScheduling = true
     unsubscribeChanges()
     try {
-      // Collect fake-live audiences before reset (for global exclusion)
-      const fakeAudiences = new Set<string>()
+      // Collect fake-live audiences with actual assigned crowds for global exclusion
+      const usedKeys = new Set<string>()
       for (const live of liveStreams.value) {
-        if (live.type === 'fake') {
+        if (live.type === 'fake' && live.assignedAudiences.length > 0) {
           for (const aud of live.assignedAudiences) {
-            fakeAudiences.add(`${aud.category}-${aud.timeRange}`)
+            usedKeys.add(`${aud.category}-${aud.timeRange}`)
           }
         }
       }
 
-      // Reset: preserve fake-live history data
-      for (const live of liveStreams.value) {
-        if (live.type === 'fake') {
-          live.conflictReasons = []
-          continue
-        }
-        live.assignedAudiences = []
-        live.exposure = 0
-        live.conflictReasons = []
-      }
+      // Reset segments: mark fake-live audiences as used, others as available
       for (const seg of audienceSegments.value) {
         const key = `${seg.category}-${seg.timeRange}`
-        if (fakeAudiences.has(key)) {
+        if (usedKeys.has(key)) {
           seg.status = 'used'
         } else {
           seg.status = 'available'
           seg.assignedTo = undefined
         }
         seg.assignedDates = []
+      }
+
+      // Recalculate exposure for all lives
+      // Fake lives with crowds keep them; fake lives without crowds get reset like real lives
+      for (const live of liveStreams.value) {
+        if (live.type === 'fake' && live.assignedAudiences.length > 0) {
+          live.conflictReasons = []
+          continue
+        }
+        live.assignedAudiences = []
+        live.exposure = 0
+        live.conflictReasons = []
       }
 
     function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
@@ -776,9 +779,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       return { crossRate: 0, conversionRate: 1, ltv: 0 }
     }
 
-    // Score and sort (skip friend-circle and fake lives)
+    // Score and sort (skip friend-circle and fake lives that already have crowds)
     const scored = liveStreams.value
-      .filter((live) => live.slot !== 'friend-circle' && live.type !== 'fake')
+      .filter((live) => live.slot !== 'friend-circle' && !(live.type === 'fake' && live.assignedAudiences.length > 0))
       .map((live) => {
         let score = 0
         if (live.grade === 'S') score += 100
@@ -808,7 +811,26 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     scored.sort((a, b) => b.score - a.score)
 
-    function tryAssign(live: LiveStream, seg: AudienceSegment) {
+    function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number): boolean {
+      if (seg.status !== 'available') return false
+      const desiredCount = Math.min(seg.count, maxCount ?? seg.count)
+      if (desiredCount <= 0) return false
+
+      // Split segment if we only need a portion
+      if (desiredCount < seg.count) {
+        const remaining: AudienceSegment = {
+          id: generateId(),
+          line: seg.line,
+          category: seg.category,
+          timeRange: seg.timeRange,
+          count: seg.count - desiredCount,
+          status: 'available',
+          assignedDates: seg.assignedDates ? [...seg.assignedDates] : [],
+        }
+        audienceSegments.value.push(remaining)
+        seg.count = desiredCount
+      }
+
       // Defensive: if segment is already assigned to another live, remove it first
       if (seg.assignedTo && seg.assignedTo !== live.id) {
         const fromLive = liveStreams.value.find((l) => l.id === seg.assignedTo)
@@ -840,6 +862,7 @@ export const useScheduleStore = defineStore('schedule', () => {
       if (!seg.assignedDates) seg.assignedDates = []
       seg.assignedDates.push(live.date)
       live.conflictReasons.push(...conflicts)
+      return true
     }
 
     // PRD v2.0: joint live / neutral category cross-line support
@@ -876,6 +899,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
       return audienceSegments.value
         .filter((s) => {
+          if (s.status !== 'available') return false
           if (!allowedLines.has(s.line)) return false
           const dates = s.assignedDates || []
           if (!allowReuse) {
@@ -944,9 +968,11 @@ export const useScheduleStore = defineStore('schedule', () => {
         if (live.exposure >= target * 1.3) continue
         const candidates = getCandidates(live, false)
         if (candidates.length > 0) {
-          tryAssign(live, candidates[0])
-          changed = true
-          await new Promise((resolve) => setTimeout(resolve, 0))
+          const maxCount = Math.max(0, Math.round(target * 1.3 - live.exposure))
+          if (maxCount > 0 && tryAssign(live, candidates[0], maxCount)) {
+            changed = true
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 0))
@@ -962,40 +988,41 @@ export const useScheduleStore = defineStore('schedule', () => {
         if (live.exposure >= target) continue
         const candidates = getCandidates(live, true)
         if (candidates.length > 0) {
-          tryAssign(live, candidates[0])
-          changed = true
-          await new Promise((resolve) => setTimeout(resolve, 0))
+          const maxCount = Math.max(0, Math.round(target - live.exposure))
+          if (maxCount > 0 && tryAssign(live, candidates[0], maxCount)) {
+            changed = true
+            await new Promise((resolve) => setTimeout(resolve, 0))
+          }
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
 
-    // Round 3: force-assign remaining available segments to any eligible live
-    // Ensures total inventory is fully allocated even if some lives exceed target
-    // Prioritize lives with lowest current exposure to distribute evenly
-    for (const seg of audienceSegments.value) {
-      if (seg.status !== 'available') continue
-      const eligibleLives = scored
-        .filter(({ live }) => {
-          const allowedLines = getAllowedLines(live)
-          if (!allowedLines.has(seg.line)) return false
-
-          const liveCat = normalizeCategory(live.category)
-          const excludedCats = live.isJoint && live.categories
-            ? new Set(live.categories.map((c) => normalizeCategory(c)))
-            : new Set([liveCat])
-          if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
-
-          const dates = seg.assignedDates || []
-          if (dates.length >= 2) return false
-          if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
-
-          return true
-        })
-        .sort((a, b) => a.live.exposure - b.live.exposure)
-
-      if (eligibleLives.length > 0) {
-        tryAssign(eligibleLives[0].live, seg)
+    // Round 3: guarantee — ensure every eligible live gets at least one segment,
+    // but only if it hasn't reached its target yet.
+    const zeroExposureLives = scored.filter(({ live }) => live.exposure === 0)
+    for (const { live } of zeroExposureLives) {
+      const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+      if (live.exposure >= target) continue
+      const candidates = audienceSegments.value.filter((seg) => {
+        if (seg.status !== 'available') return false
+        const allowedLines = getAllowedLines(live)
+        if (!allowedLines.has(seg.line)) return false
+        const liveCat = normalizeCategory(live.category)
+        const excludedCats = live.isJoint && live.categories
+          ? new Set(live.categories.map((c) => normalizeCategory(c)))
+          : new Set([liveCat])
+        if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
+        const dates = seg.assignedDates || []
+        if (dates.length >= 2) return false
+        if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
+        return true
+      })
+      if (candidates.length > 0) {
+        const maxCount = Math.max(0, Math.round(target - live.exposure))
+        if (maxCount > 0) {
+          tryAssign(live, candidates[0], maxCount)
+        }
       }
     }
 

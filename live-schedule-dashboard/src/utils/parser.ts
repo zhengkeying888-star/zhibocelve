@@ -222,31 +222,40 @@ function extractFakeHistoryFromCell(lines: string[]): { remainingLines: string[]
   let inFakeHistory = false
   let currentTimeRange = ''
 
+  // Match time ranges like: 2026年1月19日—2026年5月3日 / 2026.1.19-2026.5.3 / 2023.1-2025.4.13
+  const timeRangeRegex = /(\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*?)/
+  // Match audience count: 唱歌（113756） / 唱歌(113756) / 唱歌 113756 / 唱歌:113756 / 唱歌113756
+  const audienceRegex = /^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (line.includes('上次') && (line.includes('排期') || line.includes('直播') || line.includes('宣发'))) {
       inFakeHistory = true
-      if (i + 1 < lines.length && /年.*—/.test(lines[i + 1])) {
+      if (i + 1 < lines.length && timeRangeRegex.test(lines[i + 1])) {
         currentTimeRange = lines[i + 1]
         i++
       }
       continue
     }
     if (inFakeHistory) {
-      if (/年.*—/.test(line)) {
+      if (timeRangeRegex.test(line)) {
         currentTimeRange = line
         continue
       }
-      const match = line.match(/(.+?)[（(](\d+)[）)]/)
+      const match = line.match(audienceRegex)
       if (match && currentTimeRange) {
-        fakeAudiences.push({
-          segmentId: generateId(),
-          line: 'interest',
-          category: normalizeCategory(match[1].trim()),
-          timeRange: currentTimeRange,
-          count: parseInt(match[2], 10),
-        })
-        continue
+        const countStr = match[2].replace(/,/g, '')
+        const count = parseInt(countStr, 10)
+        if (!isNaN(count) && count > 0) {
+          fakeAudiences.push({
+            segmentId: generateId(),
+            line: 'interest',
+            category: normalizeCategory(match[1].trim()),
+            timeRange: currentTimeRange,
+            count,
+          })
+          continue
+        }
       }
       // If line doesn't match audience pattern, exit fake history mode
       inFakeHistory = false
@@ -408,9 +417,28 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       }
     }
 
-    if (fakeAudiences.length > 0 && result.length > 0) {
-      result[0].assignedAudiences.push(...fakeAudiences)
-      result[0].exposure += fakeAudiences.reduce((s, a) => s + a.count, 0)
+    if (fakeAudiences.length > 0) {
+      const fakeSlot = slot.includes('morning') ? 'fake-morning' : 'fake-evening'
+      result.unshift({
+        id: generateId(),
+        name: '上次直播记录',
+        startTime: fakeSlot === 'fake-morning' ? '07:30' : '19:00',
+        endTime: fakeSlot === 'fake-morning' ? '09:00' : '21:00',
+        date: day.date,
+        type: 'fake',
+        category: '',
+        line: result[0]?.line || 'interest',
+        slot: fakeSlot,
+        grade: null,
+        owner: '',
+        link: '',
+        ltv: 80,
+        assignedAudiences: fakeAudiences,
+        exposure: fakeAudiences.reduce((s, a) => s + a.count, 0),
+        conflictReasons: [],
+        isRecommended: false,
+        isCrossCategory: false,
+      })
     }
     return result
   }
@@ -448,21 +476,24 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   }
 
   const lineType = parseLine(name)
-  const isFake = slot.includes('fake') || name.includes('复用') || name.includes('伪')
+  const isFake = slot.includes('fake') || name.includes('复用') || name.includes('伪') || fakeAudiences.length > 0
 
-  // If cell only contains fake-history data with no real live name,
-  // create a placeholder fake live so the audiences are not lost.
-  if (fakeAudiences.length > 0 && !name) {
-    return [{
+  const results: LiveStream[] = []
+
+  // If the cell contains fake-history audiences, the entire live is treated as fake
+  // (pseudo-live reusing historical audience). autoSchedule will preserve its audience.
+  if (fakeAudiences.length > 0 || isFake) {
+    const fakeSlot = slot.includes('morning') ? 'fake-morning' : 'fake-evening'
+    results.push({
       id: generateId(),
-      name: '上次直播记录',
-      startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
-      endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+      name: name || '上次直播记录',
+      startTime: startTime || (fakeSlot === 'fake-morning' ? '07:30' : '19:00'),
+      endTime: endTime || (fakeSlot === 'fake-morning' ? '09:00' : '21:00'),
       date: day.date,
       type: 'fake',
-      category: '',
+      category: name ? inferCategory(name) : '',
       line: lineType || 'interest',
-      slot,
+      slot: fakeSlot,
       grade: null,
       owner: '',
       link,
@@ -472,29 +503,34 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       conflictReasons: [],
       isRecommended: false,
       isCrossCategory: false,
-    }]
+    })
+    return results
   }
 
-  return [{
-    id: generateId(),
-    name,
-    startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
-    endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
-    date: day.date,
-    type: isFake ? 'fake' : 'real',
-    category: inferCategory(name),
-    line: lineType,
-    slot,
-    grade: null,
-    owner: '',
-    link,
-    ltv: 80,
-    assignedAudiences: fakeAudiences,
-    exposure: fakeAudiences.reduce((s, a) => s + a.count, 0),
-    conflictReasons: [],
-    isRecommended: false,
-    isCrossCategory: false,
-  }]
+  if (name) {
+    results.push({
+      id: generateId(),
+      name,
+      startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
+      endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+      date: day.date,
+      type: 'real',
+      category: inferCategory(name),
+      line: lineType,
+      slot,
+      grade: null,
+      owner: '',
+      link,
+      ltv: 80,
+      assignedAudiences: [],
+      exposure: 0,
+      conflictReasons: [],
+      isRecommended: false,
+      isCrossCategory: false,
+    })
+  }
+
+  return results
 }
 
 // Find the row index where col0 === '星期' (header row)
@@ -917,10 +953,6 @@ export function parseLiveDetailSheet(
   }
 
   console.log('[LiveDetail] Parsed headers:', headers)
-  console.log('[LiveDetail] Found columns:', { nameIdx, catIdx, statusIdx, isTestIdx, gmvIdx, exposureIdx, firstOrdersIdx, conversionRateIdx })
-  console.log('[LiveDetail] Parsed categories:', Object.keys(result))
-  console.log('[LiveDetail] Sample stats:', Object.entries(result).slice(0, 3))
-
   return result
 }
 
@@ -1224,7 +1256,7 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
               type: 'fake',
               category: '',
               line: lineKey,
-              slot: currentSlot,
+              slot: currentSlot.includes('morning') ? 'fake-morning' : 'fake-evening',
               grade: null,
               owner: '',
               assignedAudiences: [],
