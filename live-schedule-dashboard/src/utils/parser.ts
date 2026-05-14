@@ -8,6 +8,7 @@ import type {
   LineType,
   SlotType,
   WeekDay,
+  AssignedAudience,
 } from '@/types'
 import { normalizeCategory, parseLineFromCategory } from './categoryMapping'
 
@@ -215,9 +216,54 @@ function isMetadataRow(c0: string, c1: string): boolean {
   )
 }
 
+function extractFakeHistoryFromCell(lines: string[]): { remainingLines: string[]; fakeAudiences: AssignedAudience[] } {
+  const fakeAudiences: AssignedAudience[] = []
+  const remainingLines: string[] = []
+  let inFakeHistory = false
+  let currentTimeRange = ''
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.includes('【上次直播排期】') || line.includes('上次排期')) {
+      inFakeHistory = true
+      if (i + 1 < lines.length && /年.*—/.test(lines[i + 1])) {
+        currentTimeRange = lines[i + 1]
+        i++
+      }
+      continue
+    }
+    if (inFakeHistory) {
+      if (/年.*—/.test(line)) {
+        currentTimeRange = line
+        continue
+      }
+      const match = line.match(/(.+?)[（(](\d+)[）)]/)
+      if (match && currentTimeRange) {
+        fakeAudiences.push({
+          segmentId: generateId(),
+          line: 'interest',
+          category: normalizeCategory(match[1].trim()),
+          timeRange: currentTimeRange,
+          count: parseInt(match[2], 10),
+        })
+        continue
+      }
+      // If line doesn't match audience pattern, exit fake history mode
+      inFakeHistory = false
+      currentTimeRange = ''
+      remainingLines.push(line)
+    } else {
+      remainingLines.push(line)
+    }
+  }
+  return { remainingLines, fakeAudiences }
+}
+
 function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): LiveStream[] {
-  const lines = merged.split('\n').map(l => l.trim()).filter(Boolean)
-  if (lines.length === 0) return []
+  const rawLines = merged.split('\n').map(l => l.trim()).filter(Boolean)
+  if (rawLines.length === 0) return []
+
+  const { remainingLines: lines, fakeAudiences } = extractFakeHistoryFromCell(rawLines)
 
   const timeRangeRegex = /(\d{1,2}[：:]\d{2})\s*[-~－]\s*(\d{1,2}[：:]\d{2})/
   const timeIndices: number[] = []
@@ -285,8 +331,8 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       owner: '',
       link,
       ltv: 80,
-      assignedAudiences: [],
-      exposure: 0,
+      assignedAudiences: fakeAudiences,
+      exposure: fakeAudiences.reduce((s, a) => s + a.count, 0),
       conflictReasons: [],
       isRecommended: false,
       isCrossCategory: false,
@@ -362,6 +408,10 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       }
     }
 
+    if (fakeAudiences.length > 0 && result.length > 0) {
+      result[0].assignedAudiences.push(...fakeAudiences)
+      result[0].exposure += fakeAudiences.reduce((s, a) => s + a.count, 0)
+    }
     return result
   }
 
@@ -400,6 +450,31 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   const lineType = parseLine(name)
   const isFake = slot.includes('fake') || name.includes('复用') || name.includes('伪')
 
+  // If cell only contains fake-history data with no real live name,
+  // create a placeholder fake live so the audiences are not lost.
+  if (fakeAudiences.length > 0 && !name) {
+    return [{
+      id: generateId(),
+      name: '上次直播记录',
+      startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
+      endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+      date: day.date,
+      type: 'fake',
+      category: '',
+      line: lineType || 'interest',
+      slot,
+      grade: null,
+      owner: '',
+      link,
+      ltv: 80,
+      assignedAudiences: fakeAudiences,
+      exposure: fakeAudiences.reduce((s, a) => s + a.count, 0),
+      conflictReasons: [],
+      isRecommended: false,
+      isCrossCategory: false,
+    }]
+  }
+
   return [{
     id: generateId(),
     name,
@@ -414,8 +489,8 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     owner: '',
     link,
     ltv: 80,
-    assignedAudiences: [],
-    exposure: 0,
+    assignedAudiences: fakeAudiences,
+    exposure: fakeAudiences.reduce((s, a) => s + a.count, 0),
     conflictReasons: [],
     isRecommended: false,
     isCrossCategory: false,
@@ -1102,8 +1177,7 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
 
     const day = weekDays[col - 2]
     if (!day) continue
-    const dayLives = lives.filter(l => l.date === day.date && l.slot === currentSlot)
-    if (dayLives.length === 0) continue
+    let dayLives = lives.filter(l => l.date === day.date && l.slot === currentSlot)
 
     const audLines = merged.split('\n').map(l => l.trim()).filter(Boolean)
     let currentTimeRange = ''
