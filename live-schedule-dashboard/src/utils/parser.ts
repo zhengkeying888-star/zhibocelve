@@ -1184,7 +1184,7 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
     let isFakeHistory = false
     for (let i = 0; i < audLines.length; i++) {
       const al = audLines[i]
-      if (al.includes('【上次直播排期】') || al.includes('上次排期')) {
+      if (al.includes('上次') && (al.includes('排期') || al.includes('直播') || al.includes('宣发'))) {
         isFakeHistory = true
         if (i + 1 < audLines.length && /年.*—/.test(audLines[i + 1])) {
           currentTimeRange = audLines[i + 1]
