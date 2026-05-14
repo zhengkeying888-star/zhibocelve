@@ -224,7 +224,7 @@ function extractFakeHistoryFromCell(lines: string[]): { remainingLines: string[]
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (line.includes('【上次直播排期】') || line.includes('上次排期')) {
+    if (line.includes('上次') && (line.includes('排期') || line.includes('直播') || line.includes('宣发'))) {
       inFakeHistory = true
       if (i + 1 < lines.length && /年.*—/.test(lines[i + 1])) {
         currentTimeRange = lines[i + 1]
