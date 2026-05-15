@@ -112,6 +112,25 @@ export async function saveScheduleState(state: ScheduleState): Promise<void> {
   }
 }
 
+export async function clearScheduleState(): Promise<void> {
+  // Always clear localStorage
+  localStorage.removeItem(SCHEDULE_ID_KEY)
+  localStorage.removeItem('schedule.categoryGrades')
+  localStorage.removeItem('schedule.categoryLines')
+  localStorage.removeItem('schedule.nameOverrides')
+  localStorage.removeItem('schedule.learnedRules')
+  localStorage.removeItem('schedule.categoryHistoricalStats')
+
+  // If Supabase configured, delete the schedule row
+  if (isSupabaseConfigured()) {
+    const scheduleId = getStoredScheduleId()
+    if (scheduleId) {
+      const { error } = await supabase.from('schedules').delete().eq('id', scheduleId)
+      if (error) console.error('[Cloud] Clear failed:', error.message)
+    }
+  }
+}
+
 export function subscribeToChanges(callback: () => void): () => void {
   if (!isSupabaseConfigured()) return () => {}
 

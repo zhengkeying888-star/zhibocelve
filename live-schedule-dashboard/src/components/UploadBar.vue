@@ -67,8 +67,8 @@ function onModalDone() {
         <span>&#128200;</span> 排期归因
       </button>
       <button
-        class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors"
-        @click="store.loadMockData"
+        class="text-sm text-slate-500 hover:text-red-600 flex items-center gap-1 px-2 py-1.5 transition-colors"
+        @click="store.resetAllData"
       >
         <span>&#8634;</span> 重置数据
       </button>
