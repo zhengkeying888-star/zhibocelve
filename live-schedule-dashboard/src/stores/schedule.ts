@@ -241,7 +241,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     for (const live of liveStreams.value) {
       if (live.type !== 'real') continue
       const cat = normalizeCategory(live.category)
-      const stat = categoryHistoricalStats.value[cat]
+      const stat = findHistoricalStat(cat)
       if (stat) sum += stat.avgGMV
     }
     return sum
@@ -298,7 +298,7 @@ export const useScheduleStore = defineStore('schedule', () => {
       if (live.type !== 'real') continue
       if (live.assignedAudiences.length === 0) continue
       const liveCat = normalizeCategory(live.category)
-      const hist = categoryHistoricalStats.value[liveCat]
+      const hist = findHistoricalStat(liveCat)
       const items: AttributionItem[] = []
       let totalExposure = 0
       let expectedLeads = 0
@@ -439,6 +439,31 @@ export const useScheduleStore = defineStore('schedule', () => {
   })
 
   // ========== Helpers ==========
+
+  /**
+   * 查找品类的历史统计数据，支持多级回退：
+   * 1. 精确名匹配
+   * 2. getCategoryFamily（处理瑜伽S/A/BCD → 瑜伽等等级变体）
+   * 3. 最长子串匹配（处理逆龄女神瑜伽 → 瑜伽等明细表归大类场景）
+   */
+  function findHistoricalStat(cat: string): import('@/types').CategoryHistoricalStat | undefined {
+    const stats = categoryHistoricalStats.value
+    if (stats[cat]) return stats[cat]
+
+    const family = getCategoryFamily(cat)
+    if (family !== cat && stats[family]) return stats[family]
+
+    let bestKey = ''
+    for (const key of Object.keys(stats)) {
+      if (cat.includes(key) && key.length > bestKey.length) {
+        bestKey = key
+      }
+    }
+    if (bestKey) return stats[bestKey]
+
+    return undefined
+  }
+
   function generateId() {
     return Math.random().toString(36).substring(2, 10)
   }
@@ -874,7 +899,7 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (fakeHist) score += fakeHist.conversionRate * 100
 
           const liveCat = normalizeCategory(live.category)
-          const hist = categoryHistoricalStats.value[liveCat]
+          const hist = findHistoricalStat(liveCat)
           if (hist) {
             score += Math.min(hist.avgGMV / 20000, 5)
           }
@@ -1031,7 +1056,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         if (eligible.length === 0) return null
 
         const liveCat = normalizeCategory(live.category)
-        const hist = categoryHistoricalStats.value[liveCat]
+        const hist = findHistoricalStat(liveCat)
 
         eligible.sort((a, b) => {
           // 1. Same category family first (垂类优先)
