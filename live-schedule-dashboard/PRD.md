@@ -1,6 +1,6 @@
 # 直播排期策略看板 — 产品需求文档 (PRD)
 
-> 版本：v2.3
+> 版本：v2.3（业务规则以 `docs/PRD_直播排期规则_v3.2.md` 为准）
 > 日期：2026-05-13
 > 适用范围：5月W2（5.11–5.17）及后续周次
 > 关联仓库：`live-schedule-dashboard` + `schedule_solver.py`
@@ -109,9 +109,10 @@
 - 每行独立为一场单直播
 - 通过关键词或前缀推断品类
 
-**伪直播复用**：
-- 伪直播标注的是 **上周实际使用的 audience**，本周仅作记录和全局剔除
-- 伪直播本身 **本周不分配任何新 audience**
+**伪直播复用（v3.2 修正）**：
+- 伪直播标注的是 **上周实际使用的 audience**。
+- 有 assignedAudiences 的伪直播 **本周不分配新 audience**。
+- **关键修正**：这些 audience **不**全局剔除（`seg.status = 'used'`），而是通过 `checkConflicts` 参与 3天/30天 频控，**可以被其他真直播分配**（只要满足频控硬规则）。
 
 #### 3.2.2 目标曝光（Target Exposure）
 
@@ -151,10 +152,20 @@
 4. 最长子串匹配标准名
 5. 最长子串匹配别名
 
-**同品类族判断**：
-- **规则**：只有当 `normalizeCategory(a) === normalizeCategory(b)` **严格相等**时，才算同品类族
-- **已废弃**：子串匹配、家族关键词匹配、前缀包含匹配均不再适用
-- 典型反例：`君合太极` ≠ `太极BCD`，`一杰瑜伽` ≠ `瑜伽BCD`，`体态塑形瑜伽` ≠ `瑜伽SA`
+**同品类族判断（v3.2 修正）**：
+- **规则**：先经过 `getCategoryFamily` 映射到「品类族」，再比较是否严格相等。
+- `getCategoryFamily` 处理：
+  1. 备注后缀剥离（如 `【剔除庭香】`）
+  2. Audience 等级变体映射到基族：`瑜伽S/A/BCD` → `瑜伽`；`普拉提S/A/BCD` → `普拉提`；`太极s/A/BCD` → `太极`；`手机摄影SA/BCD` → `手机摄影`
+  3. 别名族映射：`声乐` → `国际声乐`
+  4. Live 品类保持独立规范化名不变
+- **典型示例**：
+  - `瑜伽S` 与 `瑜伽` → **同族**（等级变体映射）
+  - `普拉提A` 与 `普拉提BCD` → **同族**
+  - `声乐` 与 `国际声乐` → **同族**（别名族映射）
+  - `一杰瑜伽` 与 `瑜伽` → **不同族**（live 品类独立）
+  - `君合太极` 与 `太极` → **不同族**
+  - `体态塑形瑜伽` 与 `瑜伽` → **不同族**
 
 #### 3.2.5 线级与跨线分配规则
 
@@ -164,23 +175,27 @@
   - 中性品类：`一杰瑜伽`、`东方养正瑜伽`
 - **禁止跨线**：health 线和 interest 线 **不向外跨线**
 
-#### 3.2.6 Audience 复用约束（硬规则）
+#### 3.2.6 Audience 复用约束（硬规则，v3.2 修正）
 
 | 规则 | 说明 |
 |---|---|
-| 默认 1 次/周 | 同一 audience 段默认一周内只能触达 **1** 场直播 |
-| 3 天间隔 | 未达目标的直播允许复用，同一 audience 段两次分配间隔 `>= 3` 天 |
-| 一周最多 2 次 | 同一 audience 段一周内最多被分配 `2` 场直播（含 transfer） |
 | 当日去重 | 同一天同一 audience 段只能分配给 **一场** 直播 |
+| 3 天间隔 | 同一 audience 段两次分配间隔 `>= 3` 天 |
+| 一周最多 2 次 | 同一 audience 段一周内最多被分配 `2` 场直播（含 transfer） |
 | 跨科直播不能宣发同品类族 | `isCrossCategory === true` 时不能分配同品类族 audience |
 
 **实现机制（`assignedDates`）**：
 - 每个 `AudienceSegment` 维护 `assignedDates: string[]`，记录当前周被分配的日期
 - **Round 1（严格分配）**：只选取 `assignedDates.length === 0` 的段，确保每段优先只使用一次
-- **Round 2（refill）**：仅对 `exposure < target` 的直播，允许选取已使用一次的段，但要求 `daysBetween(assignedDates[0], live.date) >= 3`
+- **无自动复用轮次**：当前 autoSchedule **不**自动把已使用一次的段再分配给第二场直播。复用仅通过手动拖拽调整实现。
 - 手动拖拽调整时，`assignAudience()` 与 `removeAudience()` 同步维护 `assignedDates`
 
-#### 3.2.7 自动排期算法
+**伪直播频控（v3.2 新增澄清）**：
+- 伪直播的 `assignedAudiences` 通过 `checkConflicts` 中的 `combinedHistory` 参与 3天频控和 30天伪直播频控。
+- `sameWeek` 检查（当日去重）**排除** `type === 'fake'` 的直播，避免伪直播历史 audience 导致 false positive。
+- 这些 audience **可被其他真直播分配**，只要满足 3天间隔等硬规则。
+
+#### 3.2.7 自动排期算法（v3.2 配额制 + 三段式）
 
 **直播优先级排序**：
 ```
@@ -192,19 +207,33 @@ historical_gmv_bonus: min(avgGMV / 20,000, 5)   // 封顶 +5
 ```
 按 score 降序排列：真直播 S > 真直播 A/B/C > 伪直播。**历史产值高的直播获得额外加分**。
 
-**伪直播预处理**：
-- 收集所有 `type === 'fake'` 直播的 `assignedAudiences`，标记为全局已使用（`seg.status = 'used'`），确保本周不再分配
-- 若排期表中 `【上次直播排期】` 的数据出现在直播信息行之前（顺序不固定），解析器会自动创建占位伪直播对象接收 audience 数据，避免全局剔除遗漏
+**配额制（Quota System）**：
+```
+totalInventory = Σ(audienceSegment.count)
+totalWeight = Σ(TARGET_EXPOSURE[live.grade])
+quota_i = (TARGET_EXPOSURE[live_i.grade] / totalWeight) × totalInventory
+```
+每场直播的配额按等级权重比例分配，确保总触达不超过总库存。
+
+**tryAssign 实时截断**：
+- `maxCount = quota - live.exposure`，单场分配**不可能超过配额**。
+- 若 segment 大于 `maxCount`，自动拆分出剩余段并重新推入可用池。
+
+**伪直播预处理（v3.2 修正）**：
+- 有 assignedAudiences 的伪直播保留其历史 audience，**不**标记为全局 `used`。
+- 这些 audience 通过 `checkConflicts` 中的 `combinedHistory` 参与 3天/30天 频控校验，可被其他真直播在符合条件时分配。
+- 若排期表中 `【上次直播排期】` 的数据出现在直播信息行之前（顺序不固定），解析器会自动创建占位伪直播对象接收 audience 数据。
 
 **候选池过滤**：
 1. **线级匹配**：`seg.line in allowed_lines`
-2. **状态可用**：`seg.status != 'used'`
-3. **次数限制**：`len(seg.assigned_dates) < 2`
-4. **当日去重**：`live_day not in seg.assigned_dates`
-5. **3天间隔**：`all(abs(live_day - d) >= 3 for d in seg.assigned_dates)`
-6. **非同品类族**：`not any(isSameCategoryFamily(seg.category, cat) for cat in excluded_cats)`
+2. **状态可用**：`seg.status === 'available'`
+3. **次数限制**：`assignedDates.length < 2`
+4. **当日去重**：`live.date not in assignedDates`
+5. **3天间隔**：`daysBetween(assignedDates[0], live.date) >= 3`
+6. **非同品类族**：`!isSameCategoryFamily(seg.category, excludedCat)`
 
-**候选排序（7级优先级，高到低）**：
+**候选排序（7级优先级 + 同线优先，高到低）**：
+0. **同线优先**（中性品类跨线前强制过滤同线候选）
 1. **同品类族优先**（垂类 audience 无需跨科，crossRate = 1.0）
 2. **已分配品类去重**（避免同一品类重复选取，强制分散搭配）
 3. **已分配 timeRange 去重**（同一时间段只选一次，进一步分散）
@@ -215,7 +244,13 @@ historical_gmv_bonus: min(avgGMV / 20,000, 5)   // 封顶 +5
    - **无历史数据时回退**：`count × crossRate × LTV`
 7. **count 降序**
 
-**停止条件**：达到目标曝光的 **130%** 后停止，确保每场直播能分配到 2–4 个段。
+**分配轮次（四段式）**：
+- **Round 1（严格分配）**：只取 `assignedDates.length === 0` 的段，按直播优先级遍历，target 截断。
+- **Round 2（剩余段分配）**：遍历仍未分配的段，分配给有 target 余量的直播。
+- **Round 3（复用分配）**：对未达 cap 的直播，允许复用已分配一次的段，条件：3日频控 + `crossRate >= 0.1%`，cap 截断。
+- **Round 4（保底）**：确保 `exposure === 0` 的直播至少获得一个段。
+
+**停止条件**：达到目标曝光的 **130%** 后停止，确保每场直播能分配到 2–4 个段。`cap = target × 1.3` 作为硬兜底。
 
 #### 3.2.8 历史等级推荐（v2.3 新增）
 

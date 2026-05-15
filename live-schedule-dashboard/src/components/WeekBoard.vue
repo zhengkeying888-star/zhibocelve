@@ -242,14 +242,25 @@ function selectLive(id: string) {
                     </div>
                     <span class="text-xs text-slate-500">{{ live.owner }}</span>
                   </div>
-                  <div class="mt-auto pt-2 border-t border-slate-100">
-                    <div class="text-[10px] text-teal-500 mb-0.5">上周记录 · 本周剔除</div>
-                    <div class="text-lg font-mono font-bold text-slate-500">{{ live.exposure.toLocaleString() }}</div>
+                  <!-- Current week exposure (for real lives on fake slots that receive audiences) -->
+                  <div v-if="live.exposure > 0" class="mt-auto pt-2 border-t border-slate-100">
+                    <div class="text-[10px] text-slate-400 mb-0.5">本周预估曝光</div>
+                    <div class="text-lg font-mono font-bold text-slate-800">{{ live.exposure.toLocaleString() }}</div>
                   </div>
-                  <div class="flex h-1.5 w-full rounded-full overflow-hidden mt-2 gap-0.5 opacity-50">
+                  <div v-if="live.exposure > 0" class="flex h-1.5 w-full rounded-full overflow-hidden mt-2 gap-0.5">
                     <div v-if="live.assignedAudiences.some(a => a.line === 'health')" class="bg-emerald-500" :style="{ width: (live.assignedAudiences.filter(a => a.line === 'health').reduce((s, a) => s + a.count, 0) / Math.max(live.exposure, 1) * 100) + '%' }"></div>
                     <div v-if="live.assignedAudiences.some(a => a.line === 'beauty')" class="bg-pink-500" :style="{ width: (live.assignedAudiences.filter(a => a.line === 'beauty').reduce((s, a) => s + a.count, 0) / Math.max(live.exposure, 1) * 100) + '%' }"></div>
                     <div v-if="live.assignedAudiences.some(a => a.line === 'interest')" class="bg-purple-500" :style="{ width: (live.assignedAudiences.filter(a => a.line === 'interest').reduce((s, a) => s + a.count, 0) / Math.max(live.exposure, 1) * 100) + '%' }"></div>
+                  </div>
+                  <!-- Fake history reference (if any) -->
+                  <div v-if="(live.fakeHistoryAudiences || []).length > 0" class="mt-auto pt-2 border-t border-slate-100" :class="live.exposure > 0 ? 'mt-2' : ''">
+                    <div class="text-[10px] text-teal-500 mb-0.5">上周记录 · 本周剔除</div>
+                    <div class="text-lg font-mono font-bold text-slate-500">{{ (live.fakeHistoryAudiences || []).reduce((s, a) => s + a.count, 0).toLocaleString() }}</div>
+                  </div>
+                  <div v-if="(live.fakeHistoryAudiences || []).length > 0" class="flex h-1.5 w-full rounded-full overflow-hidden mt-2 gap-0.5 opacity-50">
+                    <div v-if="(live.fakeHistoryAudiences || []).some(a => a.line === 'health')" class="bg-emerald-500" :style="{ width: ((live.fakeHistoryAudiences || []).filter(a => a.line === 'health').reduce((s, a) => s + a.count, 0) / Math.max((live.fakeHistoryAudiences || []).reduce((s, a) => s + a.count, 0), 1) * 100) + '%' }"></div>
+                    <div v-if="(live.fakeHistoryAudiences || []).some(a => a.line === 'beauty')" class="bg-pink-500" :style="{ width: ((live.fakeHistoryAudiences || []).filter(a => a.line === 'beauty').reduce((s, a) => s + a.count, 0) / Math.max((live.fakeHistoryAudiences || []).reduce((s, a) => s + a.count, 0), 1) * 100) + '%' }"></div>
+                    <div v-if="(live.fakeHistoryAudiences || []).some(a => a.line === 'interest')" class="bg-purple-500" :style="{ width: ((live.fakeHistoryAudiences || []).filter(a => a.line === 'interest').reduce((s, a) => s + a.count, 0) / Math.max((live.fakeHistoryAudiences || []).reduce((s, a) => s + a.count, 0), 1) * 100) + '%' }"></div>
                   </div>
                 </div>
               </div>

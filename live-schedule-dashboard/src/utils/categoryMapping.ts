@@ -208,8 +208,50 @@ export function parseLineFromCategory(category: string): LineType | null {
   return CATEGORY_TO_LINE[canonical] || null
 }
 
+/**
+ * 将规范化后的品类名映射到「品类族」（family）。
+ *
+ * 规则（PRD v3.2）：
+ * 1. Audience 等级变体映射到基族：瑜伽S/A/BCD → 瑜伽；普拉提S/A/BCD → 普拉提；
+ *    太极s/A/BCD → 太极；手机摄影SA/BCD → 手机摄影。
+ * 2. 备注后缀（如【剔除庭香】）在映射前剥离。
+ * 3. 别名族映射：声乐 → 国际声乐。
+ * 4. Live 品类保持独立规范化名（如「一杰瑜伽」「逆龄女神瑜伽」不映射到「瑜伽」）。
+ */
+function getCategoryFamily(name: string): string {
+  const normalized = normalizeCategory(name)
+  if (!normalized) return ''
+
+  // Strip note suffixes like 【剔除庭香】
+  const noteMatch = normalized.match(/^(.+?)【.*?】$/)
+  const baseName = noteMatch ? noteMatch[1] : normalized
+
+  // Grade variant mapping: audience segments with grade suffixes map to base family
+  const gradeVariantMap: Record<string, string> = {
+    '瑜伽S': '瑜伽',
+    '瑜伽A': '瑜伽',
+    '瑜伽BCD': '瑜伽',
+    '普拉提S': '普拉提',
+    '普拉提A': '普拉提',
+    '普拉提BCD': '普拉提',
+    '太极s': '太极',
+    '太极A': '太极',
+    '太极BCD': '太极',
+    '手机摄影SA': '手机摄影',
+    '手机摄影BCD': '手机摄影',
+  }
+  if (gradeVariantMap[baseName]) return gradeVariantMap[baseName]
+
+  // Family aliases: different canonical names that belong to the same family
+  const familyAliasMap: Record<string, string> = {
+    '声乐': '国际声乐',
+  }
+  if (familyAliasMap[baseName]) return familyAliasMap[baseName]
+
+  return baseName
+}
+
 export function isSameCategoryFamily(a: string, b: string): boolean {
-  // PRD v2.0: 只有 normalizeCategory 后的标准名严格相等才算同品类族
-  // 子串匹配和家族关键词匹配已移除
-  return normalizeCategory(a) === normalizeCategory(b)
+  // PRD v3.2: 先映射到品类族再比较，处理 audience 等级变体与别名族
+  return getCategoryFamily(a) === getCategoryFamily(b)
 }

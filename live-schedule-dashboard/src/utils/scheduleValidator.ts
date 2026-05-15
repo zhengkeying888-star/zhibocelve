@@ -32,9 +32,9 @@ export function validateSchedule(
     sameCategoryViolations: 0,
   }
 
-  // 1. Exhaustiveness check (friend-circle excluded)
+  // 1. Exhaustiveness check (friend-circle and fake lives excluded)
   for (const live of lives) {
-    if (live.slot === 'friend-circle') continue
+    if (live.slot === 'friend-circle' || live.type === 'fake') continue
     stats.totalExposure += live.exposure
     if (live.exposure > 0) {
       stats.scheduledLives++

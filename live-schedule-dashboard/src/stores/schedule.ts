@@ -308,21 +308,42 @@ export const useScheduleStore = defineStore('schedule', () => {
           expectedFirstOrders = liveExpectedFirstOrders
           expectedLeads = liveExpectedLeads
         } else {
-          // Category has no historical data: zero out to avoid inflated theoretical estimates
+          // Category has no historical data: fallback to theoretical crossRate × LTV model
           for (const aud of live.assignedAudiences) {
-            totalExposure += aud.count
+            const audCat = normalizeCategory(aud.category)
+            const audCohort = extractCohortMonth(aud.timeRange)
+            let crossRate: number
+            let conversionRate: number
+            let ltv: number
+            if (isSameCategoryFamily(audCat, liveCat)) {
+              crossRate = 1.0
+              conversionRate = 1.0
+              ltv = 80
+            } else {
+              const pref = findCrossPref(audCat, liveCat, audCohort)
+              crossRate = pref?.crossRate || 0
+              conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
+              ltv = pref?.ltv || live.ltv || 80
+            }
+            const leads = aud.count * crossRate
+            const firstOrders = leads * conversionRate
+            const gmv = firstOrders * ltv * gmvMultiplier.value
             items.push({
               segmentId: aud.segmentId,
               category: aud.category,
               line: aud.line,
               count: aud.count,
-              crossRate: 0,
-              conversionRate: 0,
-              ltv: 0,
-              expectedLeads: 0,
-              expectedFirstOrders: 0,
-              expectedGMV: 0,
+              crossRate,
+              conversionRate,
+              ltv,
+              expectedLeads: leads,
+              expectedFirstOrders: firstOrders,
+              expectedGMV: gmv,
             })
+            totalExposure += aud.count
+            expectedLeads += leads
+            expectedFirstOrders += firstOrders
+            expectedGMV += gmv
           }
         }
       } else {
@@ -330,10 +351,19 @@ export const useScheduleStore = defineStore('schedule', () => {
         for (const aud of live.assignedAudiences) {
           const audCat = normalizeCategory(aud.category)
           const audCohort = extractCohortMonth(aud.timeRange)
-          const pref = findCrossPref(audCat, liveCat, audCohort)
-          const crossRate = pref?.crossRate || 0
-          const conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
-          const ltv = pref?.ltv || live.ltv || 80
+          let crossRate: number
+          let conversionRate: number
+          let ltv: number
+          if (isSameCategoryFamily(audCat, liveCat)) {
+            crossRate = 1.0
+            conversionRate = 1.0
+            ltv = 80
+          } else {
+            const pref = findCrossPref(audCat, liveCat, audCohort)
+            crossRate = pref?.crossRate || 0
+            conversionRate = (pref?.conversionRate || 0) > 0 ? pref!.conversionRate : 1
+            ltv = pref?.ltv || live.ltv || 80
+          }
           const leads = aud.count * crossRate
           const firstOrders = leads * conversionRate
           const gmv = firstOrders * ltv * gmvMultiplier.value
@@ -669,8 +699,27 @@ export const useScheduleStore = defineStore('schedule', () => {
   function checkConflicts(live: LiveStream, seg: AudienceSegment): string[] {
     const reasons: string[] = []
 
+    // Build combined history from historyRecords + fakeHistoryAudiences
+    // so that last-week fake-live crowds participate in 3-day checks.
+    const combinedHistory: HistoryRecord[] = [...historyRecords.value]
+    for (const fl of liveStreams.value) {
+      const histories = fl.fakeHistoryAudiences ?? []
+      if (histories.length > 0) {
+        for (const aud of histories) {
+          combinedHistory.push({
+            date: fl.date,
+            liveId: fl.id,
+            category: aud.category,
+            timeRange: aud.timeRange,
+            type: 'fake',
+            slot: fl.slot,
+          })
+        }
+      }
+    }
+
     // 3-day rule
-    const recent = historyRecords.value.filter(
+    const recent = combinedHistory.filter(
       (h) =>
         h.category === seg.category &&
         h.timeRange === seg.timeRange &&
@@ -680,24 +729,22 @@ export const useScheduleStore = defineStore('schedule', () => {
       reasons.push(`${seg.category} ${seg.timeRange} 3天内已被触达`)
     }
 
-    // 30-day fake live rule
-    if (live.type === 'fake') {
-      const recentFake = historyRecords.value.filter(
-        (h) =>
-          h.type === 'fake' &&
-          h.category === seg.category &&
-          h.timeRange === seg.timeRange &&
-          daysBetween(h.date, live.date) <= 30
+    // 30-day fake live rule: if this live itself has fakeHistoryAudiences,
+    // those historical crowds cannot be re-assigned to this live.
+    if (live.fakeHistoryAudiences && live.fakeHistoryAudiences.length > 0) {
+      const matched = live.fakeHistoryAudiences.find(
+        (h) => h.category === seg.category && h.timeRange === seg.timeRange
       )
-      if (recentFake.length > 0) {
-        reasons.push(`${seg.category} ${seg.timeRange} 30天内已复用伪直播`)
+      if (matched) {
+        reasons.push(`${seg.category} ${seg.timeRange} 为该直播历史复用人群，30天内不可再次复用`)
       }
     }
 
-    // Same category within week
+    // Same category within week (only check real lives; fake placeholders should not count)
     const sameWeek = liveStreams.value.filter(
       (l) =>
         l.id !== live.id &&
+        l.type !== 'fake' &&
         l.date === live.date &&
         l.assignedAudiences.some((a) => a.category === seg.category && a.timeRange === seg.timeRange)
     )
@@ -723,35 +770,18 @@ export const useScheduleStore = defineStore('schedule', () => {
     isAutoScheduling = true
     unsubscribeChanges()
     try {
-      // Collect fake-live audiences with actual assigned crowds for global exclusion
-      const usedKeys = new Set<string>()
-      for (const live of liveStreams.value) {
-        if (live.type === 'fake' && live.assignedAudiences.length > 0) {
-          for (const aud of live.assignedAudiences) {
-            usedKeys.add(`${aud.category}-${aud.timeRange}`)
-          }
-        }
-      }
-
-      // Reset segments: mark fake-live audiences as used, others as available
+      // Reset segments: all segments available at start of autoSchedule
+      // fakeHistoryAudiences participate in 3-day/30-day frequency control
+      // via checkConflicts, but are NOT active assignments.
       for (const seg of audienceSegments.value) {
-        const key = `${seg.category}-${seg.timeRange}`
-        if (usedKeys.has(key)) {
-          seg.status = 'used'
-        } else {
-          seg.status = 'available'
-          seg.assignedTo = undefined
-        }
+        seg.status = 'available'
+        seg.assignedTo = undefined
         seg.assignedDates = []
       }
 
-      // Recalculate exposure for all lives
-      // Fake lives with crowds keep them; fake lives without crowds get reset like real lives
+      // Reset all real lives. Fake placeholders (if any) are skipped entirely.
       for (const live of liveStreams.value) {
-        if (live.type === 'fake' && live.assignedAudiences.length > 0) {
-          live.conflictReasons = []
-          continue
-        }
+        if (live.type === 'fake') continue
         live.assignedAudiences = []
         live.exposure = 0
         live.conflictReasons = []
@@ -779,9 +809,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       return { crossRate: 0, conversionRate: 1, ltv: 0 }
     }
 
-    // Score and sort (skip friend-circle and fake lives that already have crowds)
+    // Score and sort (skip friend-circle and standalone fake placeholders)
     const scored = liveStreams.value
-      .filter((live) => live.slot !== 'friend-circle' && !(live.type === 'fake' && live.assignedAudiences.length > 0))
+      .filter((live) => live.slot !== 'friend-circle' && live.type !== 'fake')
       .map((live) => {
         let score = 0
         if (live.grade === 'S') score += 100
@@ -811,8 +841,31 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     scored.sort((a, b) => b.score - a.score)
 
-    function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number): boolean {
-      if (seg.status !== 'available') return false
+    // Target exposure per grade. Round 1 fills to target.
+    // Cap is removed per user directive: "487万就是要分干净",
+    // "你不应该限制单场直播排期". Rounds 2-4 distribute remaining
+    // segments without artificial per-live ceilings.
+    function getTarget(live: LiveStream): number {
+      return live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+    }
+    function getCap(_live: LiveStream): number {
+      return Infinity
+    }
+
+    // Reuse threshold: dynamically computed as the mean crossRate of all non-zero
+    // cross-category preferences. Falls back to 0.001 (0.1%) if no data available.
+    function computeReuseThreshold(): number {
+      const rates = crossCategoryPrefs.value
+        .filter((p) => p.crossRate > 0 && !isSameCategoryFamily(p.fromCategory, p.toCategory))
+        .map((p) => p.crossRate)
+      if (rates.length === 0) return 0.001
+      const sum = rates.reduce((a, b) => a + b, 0)
+      return sum / rates.length
+    }
+    const REUSE_MIN_CROSS_RATE = computeReuseThreshold()
+
+    function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): boolean {
+      if (seg.status !== 'available' && !allowReuse) return false
       const desiredCount = Math.min(seg.count, maxCount ?? seg.count)
       if (desiredCount <= 0) return false
 
@@ -880,9 +933,15 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       // Determine excluded categories
-      const excludedCats = live.isJoint && live.categories
-        ? new Set(live.categories.map((c) => normalizeCategory(c)))
-        : new Set([liveCat])
+      // Only cross-category lives exclude same-family audiences; normal lives can use same-category segments.
+      let excludedCats: Set<string>
+      if (live.isJoint && live.categories && live.categories.length > 0) {
+        excludedCats = new Set(live.categories.map((c) => normalizeCategory(c)))
+      } else if (live.isCrossCategory) {
+        excludedCats = new Set([liveCat])
+      } else {
+        excludedCats = new Set<string>()
+      }
 
       const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
       const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
@@ -897,7 +956,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         ).length
       }
 
-      return audienceSegments.value
+      const candidates = audienceSegments.value
         .filter((s) => {
           if (s.status !== 'available') return false
           if (!allowedLines.has(s.line)) return false
@@ -913,6 +972,11 @@ export const useScheduleStore = defineStore('schedule', () => {
         })
         .filter((s) => !Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(s.category))))
         .sort((a, b) => {
+          // 0. 同线优先（跨线段排后面，尤其针对中性品类跨线）
+          const aSameLine = a.line === live.line
+          const bSameLine = b.line === live.line
+          if (aSameLine !== bSameLine) return bSameLine ? 1 : -1
+
           // 1. 同品类族优先
           const aSameFamily = isSameCategoryFamily(a.category, live.category)
           const bSameFamily = isSameCategoryFamily(b.category, live.category)
@@ -957,18 +1021,28 @@ export const useScheduleStore = defineStore('schedule', () => {
           // 7. count 降序
           return b.count - a.count
         })
+
+      // For neutral categories: exhaust same-line inventory before cross-line
+      if (NEUTRAL_CATEGORIES.has(live.category) && live.line === 'beauty') {
+        const sameLineCandidates = candidates.filter((s) => s.line === live.line)
+        if (sameLineCandidates.length > 0) {
+          return sameLineCandidates
+        }
+      }
+
+      return candidates
     }
 
-    // Round 1: strict allocation — each audience segment can only be used once
+    // Round 1: strict allocation — each segment used exactly once, capped at target
     let changed = true
     while (changed) {
       changed = false
       for (const { live } of scored) {
-        const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
-        if (live.exposure >= target * 1.3) continue
+        const target = getTarget(live)
+        if (live.exposure >= target) continue
         const candidates = getCandidates(live, false)
         if (candidates.length > 0) {
-          const maxCount = Math.max(0, Math.round(target * 1.3 - live.exposure))
+          const maxCount = Math.max(0, target - live.exposure)
           if (maxCount > 0 && tryAssign(live, candidates[0], maxCount)) {
             changed = true
             await new Promise((resolve) => setTimeout(resolve, 0))
@@ -978,18 +1052,64 @@ export const useScheduleStore = defineStore('schedule', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
 
-    // Round 2: refill under-target lives with reused segments (3-day gap, max 2/week)
-    // Only lives that haven't reached their target are eligible for reuse
+    // Round 2: distribute remaining never-assigned segments to lives still under cap
+    for (const seg of audienceSegments.value) {
+      if (seg.status !== 'available' || (seg.assignedDates && seg.assignedDates.length > 0)) continue
+      const eligibleLives = scored
+        .filter(({ live }) => {
+          const cap = getCap(live)
+          if (live.exposure >= cap) return false
+          const allowedLines = getAllowedLines(live)
+          if (!allowedLines.has(seg.line)) return false
+
+          const liveCat = normalizeCategory(live.category)
+          let excludedCats: Set<string>
+          if (live.isJoint && live.categories && live.categories.length > 0) {
+            excludedCats = new Set(live.categories.map((c) => normalizeCategory(c)))
+          } else if (live.isCrossCategory) {
+            excludedCats = new Set([liveCat])
+          } else {
+            excludedCats = new Set<string>()
+          }
+          if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
+
+          return true
+        })
+        .sort((a, b) => {
+          const gradeScore: Record<string, number> = { S: 100, A: 70, B: 40, C: 20 }
+          const gradeDiff = (gradeScore[b.live.grade || 'C'] || 0) - (gradeScore[a.live.grade || 'C'] || 0)
+          if (gradeDiff !== 0) return gradeDiff
+          return a.live.exposure - b.live.exposure
+        })
+
+      if (eligibleLives.length > 0) {
+        const live = eligibleLives[0].live
+        const cap = getCap(live)
+        const maxCount = Math.max(0, cap - live.exposure)
+        if (maxCount > 0) {
+          tryAssign(live, seg, maxCount)
+        }
+      }
+    }
+
+    // Round 3: reuse allocation for under-cap lives with high cross-rate
+    // Conditions: 3-day gap (handled by getCandidates) + crossRate >= threshold
     changed = true
     while (changed) {
       changed = false
       for (const { live } of scored) {
-        const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
-        if (live.exposure >= target) continue
-        const candidates = getCandidates(live, true)
+        const cap = getCap(live)
+        if (live.exposure >= cap) continue
+        const candidates = getCandidates(live, true).filter((seg) => {
+          // Only segments that have been assigned exactly once
+          if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
+          // High historical cross-rate check
+          const pref = getCrossPref(seg.category, live.category, seg.timeRange)
+          return (pref.crossRate || 0) >= REUSE_MIN_CROSS_RATE
+        })
         if (candidates.length > 0) {
-          const maxCount = Math.max(0, Math.round(target - live.exposure))
-          if (maxCount > 0 && tryAssign(live, candidates[0], maxCount)) {
+          const maxCount = Math.max(0, cap - live.exposure)
+          if (maxCount > 0 && tryAssign(live, candidates[0], maxCount, true)) {
             changed = true
             await new Promise((resolve) => setTimeout(resolve, 0))
           }
@@ -998,31 +1118,39 @@ export const useScheduleStore = defineStore('schedule', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     }
 
-    // Round 3: guarantee — ensure every eligible live gets at least one segment,
-    // but only if it hasn't reached its target yet.
-    const zeroExposureLives = scored.filter(({ live }) => live.exposure === 0)
-    for (const { live } of zeroExposureLives) {
-      const target = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
-      if (live.exposure >= target) continue
-      const candidates = audienceSegments.value.filter((seg) => {
-        if (seg.status !== 'available') return false
-        const allowedLines = getAllowedLines(live)
-        if (!allowedLines.has(seg.line)) return false
-        const liveCat = normalizeCategory(live.category)
-        const excludedCats = live.isJoint && live.categories
-          ? new Set(live.categories.map((c) => normalizeCategory(c)))
-          : new Set([liveCat])
-        if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
-        const dates = seg.assignedDates || []
-        if (dates.length >= 2) return false
-        if (dates.length === 1 && daysBetween(dates[0], live.date) < 3) return false
-        return true
+    // Round 4: force-fill — assign all remaining available segments to under-cap lives
+    // (sorted by exposure asc so neediest lives get first pick)
+    const underCapLives = scored
+      .filter(({ live }) => {
+        const cap = getCap(live)
+        return live.exposure < cap
       })
-      if (candidates.length > 0) {
-        const maxCount = Math.max(0, Math.round(target - live.exposure))
-        if (maxCount > 0) {
-          tryAssign(live, candidates[0], maxCount)
-        }
+      .sort((a, b) => a.live.exposure - b.live.exposure)
+
+    for (const { live } of underCapLives) {
+      const cap = getCap(live)
+      while (live.exposure < cap) {
+        const candidates = audienceSegments.value.filter((seg) => {
+          if (seg.status !== 'available') return false
+          if (seg.assignedDates && seg.assignedDates.length > 0) return false
+          const allowedLines = getAllowedLines(live)
+          if (!allowedLines.has(seg.line)) return false
+          const liveCat = normalizeCategory(live.category)
+          let excludedCats: Set<string>
+          if (live.isJoint && live.categories && live.categories.length > 0) {
+            excludedCats = new Set(live.categories.map((c) => normalizeCategory(c)))
+          } else if (live.isCrossCategory) {
+            excludedCats = new Set([liveCat])
+          } else {
+            excludedCats = new Set<string>()
+          }
+          if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
+          return true
+        })
+        if (candidates.length === 0) break
+        const maxCount = Math.max(0, cap - live.exposure)
+        if (maxCount <= 0) break
+        tryAssign(live, candidates[0], maxCount)
       }
     }
 
@@ -1035,10 +1163,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.warn('排期警告:', validation.warnings)
     }
     console.log('排期统计:', validation.stats)
-    const totalInventory = audienceSegments.value.reduce((sum, s) => sum + s.count, 0)
+    const finalInventory = audienceSegments.value.reduce((sum, s) => sum + s.count, 0)
     const totalAssigned = liveStreams.value.filter(l => l.type === 'real').reduce((sum, l) => sum + l.exposure, 0)
     const remaining = audienceSegments.value.filter(s => s.status === 'available').reduce((sum, s) => sum + s.count, 0)
-    console.log('【诊断】总库存:', totalInventory, '总触达:', totalAssigned, '剩余:', remaining, '段数:', audienceSegments.value.length)
+    console.log('【诊断】总库存:', finalInventory, '总触达:', totalAssigned, '剩余:', remaining, '段数:', audienceSegments.value.length)
     } finally {
       isAutoScheduling = false
       // Force-save immediately so cloud gets the fresh result before re-enabling sync

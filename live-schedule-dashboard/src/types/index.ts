@@ -39,6 +39,8 @@ export interface LiveStream {
   assignedAudiences: AssignedAudience[]
   exposure: number
   conflictReasons: string[]
+  // PRD v3.2: fake-live historical audiences (for frequency-control only, not active assignment)
+  fakeHistoryAudiences?: AssignedAudience[]
   isRecommended: boolean
   isCrossCategory: boolean
   // Joint live fields (v2)
