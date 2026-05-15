@@ -127,11 +127,12 @@ interface CategoryHistoricalStat {
 2. **联合直播自然跨线**：联合直播涉及多线品类时，允许跨线分配。
 3. **中性品类单直播跨线**：beauty 线 → health 线，仅限 `一杰瑜伽`、`东方养正瑜伽`。
 4. **health / interest 不向外跨线**。
-5. **跨科直播不能宣发同品类**：如果 `isCrossCategory === true`，不能分配与直播品类属于同一家族的 audience。
-6. **3 天频控**：同一个 audience 段 3 天内不能被重复触达。
+5. **跨科直播不能宣发同品类**：如果 `isCrossCategory === true`，不能分配与直播品类属于同一家族的 audience。**比较时必须用 `isSameCategoryFamily`，不能用 `===`**。
+6. **3 天频控**：同一个 audience 段 3 天内不能被重复触达。**品类比较用 `isSameCategoryFamily`**，确保别名族（如 `声乐`/`国际声乐`）和等级变体（如 `瑜伽S`/`瑜伽`）也被正确频控。
 7. **30 天伪直播复用**：伪直播复用的 audience 段 30 天内不能被再次复用。
 8. **当日去重**：同一天同一个 audience 段只能分配给一场直播。
 9. **朋友圈资源位不排量级**：`slot === 'friend-circle'` 的直播只做标注，不参与 audience 分配。
+10. **5-family 限制**：每个直播最多分配 **5 个不同品类族**的 audience。计数用 `getCategoryFamily`，确保等级变体（瑜伽S/A/BCD）计为 1 个族。
 
 ## 品类映射系统
 
@@ -171,9 +172,9 @@ historical_gmv_bonus: Math.min(avgGMV / 20_000, 5)   // 封顶 +5
 
 ### 3. 分配轮次
 
-- **Round 1（严格分配）**：只选 `assignedDates.length === 0` 的段
-- **Round 2（refill）**：对未达 target 的直播，允许复用，但要求 `daysBetween >= 3` 且 `assignedDates.length < 2`
-- **Round 3（force-fill）**：将剩余可用段强制分配给最缺曝光的直播
+- **Round 1（目标保底）**：只选 `assignedDates.length === 0` 的段。每轮每个直播只拿一个最佳段，`maxCount = target - exposure` 限制不超目标。分配后**不 splice** 已用段，保留在 `linePools` 中供 Round 2 复用。
+- **Round 2（复用填充）**：允许复用 Round 1 已分配的段。`pickBest(..., allowReuse=true)` 允许 `status === 'used'` 且 `assignedDates.length === 1` 且 `daysBetween >= 3` 的段进入候选池。`tryAssign(..., allowReuse=true)` **跳过 transfer 逻辑**（不从原直播移除），真正共享。当 `assignedDates.length >= 2` 时才从 `linePools` splice。
+- **Round 3（零曝光兜底）**：对 `exposure === 0` 的直播强制分配。先尝试 unused 段，再尝试 reusable 段。
 
 ### 4. 停止条件
 
@@ -216,6 +217,11 @@ expectedFirstOrders = avgFirstOrders × scaleFactor
 expectedLeads       = (avgFirstOrders / avgConversionRate) × scaleFactor   // avgConversionRate > 0
 ```
 按各 assigned audience 的 `count / totalExposure` 比例分摊到 segment 级别。
+
+**历史数据查找（`findHistoricalStat`）**：
+1. 精确匹配 `categoryHistoricalStats[cat]`
+2. `getCategoryFamily(cat)` 回退（处理等级变体如 `瑜伽S` → `瑜伽`）
+3. 最长子串回退（处理细分类目包含大类如 `逆龄女神瑜伽` 包含 `瑜伽`）
 
 **无历史数据的品类**：
 ```
@@ -302,11 +308,21 @@ npm run build    # 生产构建
 npm run preview  # 预览构建产物
 ```
 
+## 版本与数据兼容性
+
+- **DATA_VERSION**: `v3.3-reuse-and-family-conflicts`
+- 每次 autoSchedule 逻辑发生不兼容变更时必须 bump DATA_VERSION，强制清空旧 persisted state
+- 版本不匹配时自动调用 `resetAllData()` 并 reload 页面
+
 ## 注意事项
 
 - 不要mock数据库，所有测试都基于真实Excel解析逻辑
 - 品类名必须走 `normalizeCategory` 规范化后再做匹配，否则归因会全是0
+- **频控/排除/去重中的品类比较必须用 `isSameCategoryFamily`，绝对不能用 `===`**。`===` 会导致别名族（`声乐`/`国际声乐`）和等级变体（`瑜伽S`/`瑜伽`）的频控漏控
+- **复用和转移是完全不同的概念**：`tryAssign` 的 transfer 逻辑（从原直播移除）在复用场景下是毁灭性 bug
 - 修改品类映射后需要重新上传数据或点击「应用到所有场次」+「重新生成排期」
 - 构建输出在 `dist/` 目录，可部署到任何静态托管服务
 - **跨科偏好文件格式**：必须包含 `转继承添加好友月份` 列作为第0列，系统按此列提取 `cohortMonth`
 - **4月直播明细表格式**：必须包含「品类」或「公开课名称」用于映射，「总gmv」「曝光人数」用于统计。上传后系统强制走统一历史路径，无历史数据的品类 GMV 将显示为 0
+- **联合直播原始名分隔符**：明细表/排期表中的联合直播名可能用 `x`、`X`、`×` 分隔（如 `五禽戏 x 健康食养`），`normalizeCategory` 已支持这些分隔符
+- **品类映射双向审计**：不仅要维护 `CATEGORY_TO_LINE` 和 `CATEGORY_ALIASES`，还要定期读取上游 Excel 实际出现的原始名，确保映射无断裂
