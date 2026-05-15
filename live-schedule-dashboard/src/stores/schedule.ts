@@ -31,6 +31,10 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 }
 
 export const useScheduleStore = defineStore('schedule', () => {
+  // Breaking-change data version: bump this whenever autoSchedule logic changes
+  // in a way that makes old persisted assignments invalid.
+  const DATA_VERSION = 'v3.1-cat-concentration'
+
   // ========== State ==========
   const liveStreams = ref<LiveStream[]>([])
   const audienceSegments = ref<AudienceSegment[]>([])
@@ -147,6 +151,15 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.log('[Cloud] Skipping cloud load during autoSchedule')
       return
     }
+
+    // Auto-reset on breaking change so old persisted assignments don't leak
+    const savedVersion = localStorage.getItem('schedule_data_version')
+    if (savedVersion !== DATA_VERSION) {
+      console.log('[Version] Data version mismatch:', savedVersion, '!==', DATA_VERSION, '→ auto-reset')
+      await resetAllData()
+      return
+    }
+
     isLoadingFromCloud = true
     const state = await loadScheduleState()
     if (state) {
@@ -1103,6 +1116,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         // Fallback: try reusable segments (already assigned on a different day)
         if (!assigned) {
+          const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
           const reusable = audienceSegments.value.filter((seg) => {
             if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
             if (daysBetween(seg.assignedDates[0], live.date) < 3) return false
@@ -1110,6 +1124,7 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (!lines.includes(seg.line)) return false
             const excludedCats = getExcludedCats(live)
             if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
+            if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) return false
             const conflicts = checkConflicts(live, seg)
             if (conflicts.length > 0) return false
             return true
@@ -1333,6 +1348,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
     // Clear cloud + localStorage
     await clearScheduleState()
+    localStorage.setItem('schedule_data_version', DATA_VERSION)
     console.log('[Reset] All data cleared. Reloading page...')
     window.location.reload()
   }
