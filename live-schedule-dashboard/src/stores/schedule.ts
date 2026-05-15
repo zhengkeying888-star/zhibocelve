@@ -1028,19 +1028,25 @@ export const useScheduleStore = defineStore('schedule', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
-      // Round 2: Distribute remaining unused segments without cap.
-      // High-weight lives get first pick of leftovers.
-      for (const { live } of scored) {
-        const allowedLines = getLiveAllowedLines(live)
-        for (const line of allowedLines) {
-          while (true) {
+      // Round 2: Distribute remaining unused segments in round-robin.
+      // Each live gets one segment per iteration, so high-weight lives
+      // accumulate more over time but no single live monopolizes the pool.
+      let round2Changed = true
+      while (round2Changed) {
+        round2Changed = false
+        for (const { live } of scored) {
+          const allowedLines = getLiveAllowedLines(live)
+          for (const line of allowedLines) {
             const best = pickBest(live, linePools[line])
-            if (!best) break
-            const remaining = tryAssign(live, best)
-            const idx = linePools[line].indexOf(best)
-            if (idx !== -1) linePools[line].splice(idx, 1)
-            if (remaining) {
-              linePools[remaining.line].push(remaining)
+            if (best) {
+              const remaining = tryAssign(live, best)
+              const idx = linePools[line].indexOf(best)
+              if (idx !== -1) linePools[line].splice(idx, 1)
+              if (remaining) {
+                linePools[remaining.line].push(remaining)
+              }
+              round2Changed = true
+              break
             }
           }
         }
