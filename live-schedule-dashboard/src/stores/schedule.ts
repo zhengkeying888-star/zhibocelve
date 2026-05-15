@@ -995,9 +995,41 @@ export const useScheduleStore = defineStore('schedule', () => {
         return eligible[0]
       }
 
-      // Round 1: Sequential weighted allocation from line pools.
-      // High-weight lives pick first from their primary line, then cross lines.
-      // No per-live cap: lives keep picking until no valid segments remain.
+      function getTarget(live: LiveStream): number {
+        return live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+      }
+
+      // Round 1: Target-guaranteed round-robin.
+      // Each live picks segments until it reaches its target.
+      // High-weight lives go first, but we loop until everyone reaches target
+      // or no more valid segments exist, ensuring low-weight lives get their fair share.
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const { live } of scored) {
+          const target = getTarget(live)
+          if (live.exposure >= target) continue
+          const allowedLines = getLiveAllowedLines(live)
+          for (const line of allowedLines) {
+            const best = pickBest(live, linePools[line])
+            if (best) {
+              const maxCount = Math.max(0, target - live.exposure)
+              const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined)
+              const idx = linePools[line].indexOf(best)
+              if (idx !== -1) linePools[line].splice(idx, 1)
+              if (remaining) {
+                linePools[remaining.line].push(remaining)
+              }
+              changed = true
+              break
+            }
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+
+      // Round 2: Distribute remaining unused segments without cap.
+      // High-weight lives get first pick of leftovers.
       for (const { live } of scored) {
         const allowedLines = getLiveAllowedLines(live)
         for (const line of allowedLines) {
@@ -1015,8 +1047,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
-      // Round 2: Zero-exposure guarantee.
-      // Any live that got nothing in Round 1 gets at least one segment.
+      // Round 3: Zero-exposure guarantee fallback.
+      // Any live that still has nothing gets at least one segment (reuse if needed).
       const zeroExposureLives = scored
         .filter(({ live }) => live.exposure === 0)
         .sort((a, b) => b.score - a.score)
