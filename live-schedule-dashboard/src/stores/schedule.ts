@@ -15,7 +15,7 @@ import type {
   LiveAttribution,
   AttributionItem,
 } from '@/types'
-import { normalizeCategory, isSameCategoryFamily, parseLineFromCategory } from '@/utils/categoryMapping'
+import { normalizeCategory, isSameCategoryFamily, parseLineFromCategory, getCategoryFamily } from '@/utils/categoryMapping'
 import { validateSchedule } from '@/utils/scheduleValidator'
 import { loadScheduleState, saveScheduleState, subscribeToChanges, clearScheduleState } from '@/lib/cloudSync'
 import type { ScheduleState } from '@/lib/cloudSync'
@@ -130,6 +130,12 @@ export const useScheduleStore = defineStore('schedule', () => {
       const filtered = state.liveStreams.filter(l => !(l.type === 'fake' && l.name === '上次直播记录'))
       if (filtered.length !== state.liveStreams.length) {
         console.log('[State] Filtered out', state.liveStreams.length - filtered.length, 'legacy fake placeholders')
+      }
+      // Migration: all real lives must be cross-category (v3.2+)
+      for (const live of filtered) {
+        if (live.type === 'real' && live.isCrossCategory === false) {
+          live.isCrossCategory = true
+        }
       }
       liveStreams.value = filtered
     }
@@ -983,12 +989,13 @@ export const useScheduleStore = defineStore('schedule', () => {
 
       function pickBest(live: LiveStream, pool: AudienceSegment[]): AudienceSegment | null {
         const excludedCats = getExcludedCats(live)
-        const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
+        // Use category FAMILY for counting so 太极s/A/BCD count as one "太极"
+        const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
         const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
 
         // Debug: log when category limit is active
         if (assignedCats.size >= 5) {
-          console.log(`[pickBest] ${live.name} has ${assignedCats.size} cats, limiting to existing:`, Array.from(assignedCats))
+          console.log(`[pickBest] ${live.name} has ${assignedCats.size} cat families, limiting to existing:`, Array.from(assignedCats))
         }
 
         const eligible = pool.filter((seg) => {
@@ -997,9 +1004,9 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
           const conflicts = checkConflicts(live, seg)
           if (conflicts.length > 0) return false
-          // Soft max 5 categories per live: once 5 categories are assigned, only pick from existing ones
-          if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) {
-            console.log(`[pickBest] ${live.name} SKIP ${normalizeCategory(seg.category)} (limit reached)`)
+          // Soft max 5 categories per live: once 5 families are assigned, only pick from existing ones
+          if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) {
+            console.log(`[pickBest] ${live.name} SKIP ${getCategoryFamily(seg.category)} (family limit reached)`)
             return false
           }
           return true
@@ -1022,8 +1029,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
 
           // 3. Prefer already-assigned categories (品类集中)
-          const aDupCat = assignedCats.has(normalizeCategory(a.category))
-          const bDupCat = assignedCats.has(normalizeCategory(b.category))
+          const aDupCat = assignedCats.has(getCategoryFamily(a.category))
+          const bDupCat = assignedCats.has(getCategoryFamily(b.category))
           if (aDupCat !== bDupCat) return aDupCat ? -1 : 1
 
           // 4. Avoid duplicate timeRanges (still prefer new timeRanges within same category)

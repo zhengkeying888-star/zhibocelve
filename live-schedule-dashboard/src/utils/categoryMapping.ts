@@ -218,7 +218,7 @@ export function parseLineFromCategory(category: string): LineType | null {
  * 3. 别名族映射：声乐 → 国际声乐。
  * 4. Live 品类保持独立规范化名（如「一杰瑜伽」「逆龄女神瑜伽」不映射到「瑜伽」）。
  */
-function getCategoryFamily(name: string): string {
+export function getCategoryFamily(name: string): string {
   const normalized = normalizeCategory(name)
   if (!normalized) return ''
 
