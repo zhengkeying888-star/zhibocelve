@@ -1145,6 +1145,7 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
     }
 
     // Merge and parse each column
+    let anyLiveParsed = false
     for (let col = startCol; col <= 8; col++) {
       const lines: string[] = []
       for (const lr of liveInfoRows) {
@@ -1158,7 +1159,17 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
       if (!day) continue
 
       const parsedLives = parseMergedLiveCell(merged, day, currentSlot)
-      lives.push(...parsedLives)
+      if (parsedLives.length > 0) {
+        lives.push(...parsedLives)
+        anyLiveParsed = true
+      }
+    }
+
+    // Fallback: if no lives were parsed from any column, these rows might be
+    // an audience assignment block without explicit line labels (common in
+    // completed schedules where audience data is written directly below live names).
+    if (!anyLiveParsed && liveInfoRows.length > 0) {
+      parseAudienceAssignmentBlock(liveInfoRows, weekDays, currentSlot, lives, startCol)
     }
 
     // After live-info rows, there may be metadata rows before the next block.
@@ -1182,9 +1193,35 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
   return { lives, weekDays }
 }
 
+function inferLineKey(rows: any[][], startCol: number): LineType {
+  // Try explicit label first
+  const label = normCell(rows[0][1])
+  if (label === '健康线') return 'health'
+  if (label === '变美线') return 'beauty'
+  if (label === '兴趣线') return 'interest'
+
+  // Fallback: infer from the first audience entry's category
+  for (let col = startCol; col <= 8; col++) {
+    for (const r of rows) {
+      const cell = normCell(r[col])
+      if (!cell) continue
+      const lines = cell.split('\n').map(l => l.trim()).filter(Boolean)
+      for (const line of lines) {
+        const match = line.match(/(.+?)[（(](\d+)[）)]/)
+        if (match) {
+          const category = normalizeCategory(match[1].trim())
+          const lineType = parseLineFromCategory(category)
+          if (lineType) return lineType
+        }
+      }
+    }
+  }
+  return 'health' // ultimate fallback
+}
+
 function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], currentSlot: SlotType, lives: LiveStream[], startCol = 2) {
   if (rows.length === 0) return
-  const lineKey: LineType = normCell(rows[0][1]) === '健康线' ? 'health' : normCell(rows[0][1]) === '变美线' ? 'beauty' : 'interest'
+  const lineKey: LineType = inferLineKey(rows, startCol)
 
   for (let col = startCol; col <= 8; col++) {
     const lines: string[] = []

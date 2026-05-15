@@ -121,7 +121,14 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (state.learnedRules) learnedRules.value = state.learnedRules
     if (state.currentWeek) currentWeek.value = state.currentWeek
     if (state.weekDays) weekDays.value = state.weekDays
-    if (state.liveStreams) liveStreams.value = state.liveStreams
+    if (state.liveStreams) {
+      // Filter out legacy fake placeholders created by old parser versions
+      const filtered = state.liveStreams.filter(l => !(l.type === 'fake' && l.name === '上次直播记录'))
+      if (filtered.length !== state.liveStreams.length) {
+        console.log('[State] Filtered out', state.liveStreams.length - filtered.length, 'legacy fake placeholders')
+      }
+      liveStreams.value = filtered
+    }
     if (state.audienceSegments) audienceSegments.value = state.audienceSegments
     if (state.historyRecords) historyRecords.value = state.historyRecords
     if (state.crossPrefs) crossPrefs.value = state.crossPrefs
