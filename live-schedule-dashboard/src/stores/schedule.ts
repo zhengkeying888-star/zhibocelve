@@ -33,7 +33,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 export const useScheduleStore = defineStore('schedule', () => {
   // Breaking-change data version: bump this whenever autoSchedule logic changes
   // in a way that makes old persisted assignments invalid.
-  const DATA_VERSION = 'v3.1-cat-concentration'
+  const DATA_VERSION = 'v3.2-all-cross-category'
 
   // ========== State ==========
   const liveStreams = ref<LiveStream[]>([])

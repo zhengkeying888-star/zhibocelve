@@ -374,7 +374,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       exposure: 0,
       conflictReasons: [],
       isRecommended: false,
-      isCrossCategory: false,
+      isCrossCategory: true,
       isJoint: true,
     }]
   }
@@ -433,7 +433,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         exposure: 0,
         conflictReasons: [],
         isRecommended: false,
-        isCrossCategory: false,
+        isCrossCategory: true,
       })
 
       startIdx = ti + 1
@@ -511,7 +511,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       exposure: 0,
       conflictReasons: [],
       isRecommended: false,
-      isCrossCategory: false,
+      isCrossCategory: true,
     })
   }
 
