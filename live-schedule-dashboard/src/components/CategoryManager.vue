@@ -15,10 +15,17 @@ const categories = computed(() => {
     name: cat,
     line: store.categoryLines[cat] || null,
     grade: store.categoryGrades[cat] || null,
+    suggestedGrade: store.historicalGradeSuggestion[cat] || null,
   }))
   list.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   return list
 })
+
+function applyHistoricalGrades() {
+  for (const [cat, grade] of Object.entries(store.historicalGradeSuggestion)) {
+    store.setCategoryGrade(cat, grade)
+  }
+}
 
 function setLine(cat: string, line: LineType | '') {
   if (line) store.setCategoryLine(cat, line)
@@ -62,7 +69,8 @@ async function applyAll() {
                 <tr class="border-b border-slate-200">
                   <th class="text-left py-2 text-xs font-semibold text-slate-500 uppercase">品类名称</th>
                   <th class="text-left py-2 text-xs font-semibold text-slate-500 uppercase">所属线</th>
-                  <th class="text-left py-2 text-xs font-semibold text-slate-500 uppercase">等级</th>
+                  <th class="text-left py-2 text-xs font-semibold text-slate-500 uppercase">当前等级</th>
+                  <th class="text-left py-2 text-xs font-semibold text-slate-500 uppercase">历史建议</th>
                 </tr>
               </thead>
               <tbody>
@@ -97,6 +105,23 @@ async function applyAll() {
                       <option value="C">C</option>
                     </select>
                   </td>
+                  <td class="py-2.5">
+                    <span
+                      v-if="cat.suggestedGrade"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-bold border cursor-pointer"
+                      :class="{
+                        'bg-amber-50 text-amber-700 border-amber-200': cat.suggestedGrade === 'S',
+                        'bg-blue-50 text-blue-700 border-blue-200': cat.suggestedGrade === 'A',
+                        'bg-sky-50 text-sky-700 border-sky-200': cat.suggestedGrade === 'B',
+                        'bg-gray-50 text-gray-600 border-gray-200': cat.suggestedGrade === 'C',
+                      }"
+                      @click="setGrade(cat.name, cat.suggestedGrade!)"
+                      title="点击采纳"
+                    >
+                      {{ cat.suggestedGrade }}级
+                    </span>
+                    <span v-else class="text-xs text-slate-300">—</span>
+                  </td>
                 </tr>
                 <tr v-if="categories.length === 0">
                   <td colspan="3" class="py-8 text-center text-sm text-slate-400">
@@ -112,6 +137,13 @@ async function applyAll() {
               <span class="text-xs text-slate-500">
                 共 {{ categories.length }} 个品类
               </span>
+              <button
+                v-if="Object.keys(store.historicalGradeSuggestion).length > 0"
+                class="text-xs text-blue-600 hover:text-blue-700 hover:underline"
+                @click="applyHistoricalGrades"
+              >
+                按历史数据自动评级
+              </button>
               <label class="flex items-center gap-1.5 cursor-pointer">
                 <input v-model="autoReschedule" type="checkbox" class="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                 <span class="text-xs text-slate-600">重新生成排期</span>

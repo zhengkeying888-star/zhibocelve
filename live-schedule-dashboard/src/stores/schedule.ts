@@ -272,8 +272,14 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   const uniqueCategories = computed(() => {
     const set = new Set<string>()
+    // Categories from current week's live streams
     for (const live of liveStreams.value) {
       if (live.category) set.add(live.category)
+    }
+    // Also include categories from uploaded historical stats so users can
+    // pre-configure grades/lines for categories not in this week's schedule.
+    for (const cat of Object.keys(categoryHistoricalStats.value)) {
+      set.add(cat)
     }
     return Array.from(set).sort()
   })
