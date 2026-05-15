@@ -114,6 +114,7 @@ function formatGMV(n: number): string {
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase">直播名称</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase">品类</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase">线</th>
+                  <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-center">评级</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">触达人数</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计线索</th>
                   <th class="py-2 text-xs font-semibold text-slate-500 uppercase text-right">预计首单</th>
@@ -149,6 +150,23 @@ function formatGMV(n: number): string {
                     }">
                       {{ lineLabel[att.line] }}
                     </span>
+                  </td>
+                  <td class="py-2.5 text-center">
+                    <span
+                      v-if="att.grade || att.suggestedGrade"
+                      class="px-1.5 py-0.5 rounded text-[10px] font-bold border"
+                      :class="{
+                        'bg-amber-50 text-amber-700 border-amber-200': (att.grade || att.suggestedGrade) === 'S',
+                        'bg-blue-50 text-blue-700 border-blue-200': (att.grade || att.suggestedGrade) === 'A',
+                        'bg-sky-50 text-sky-700 border-sky-200': (att.grade || att.suggestedGrade) === 'B',
+                        'bg-gray-50 text-gray-600 border-gray-200': (att.grade || att.suggestedGrade) === 'C',
+                      }"
+                      :title="att.suggestedGrade && att.suggestedGrade !== att.grade ? `历史建议: ${att.suggestedGrade}` : ''"
+                    >
+                      {{ att.grade || att.suggestedGrade }}级
+                      <span v-if="att.suggestedGrade && att.suggestedGrade !== att.grade" class="text-[9px] opacity-70">(历{{ att.suggestedGrade }})</span>
+                    </span>
+                    <span v-else class="text-xs text-slate-400">—</span>
                   </td>
                   <td class="py-2.5 text-right font-mono text-slate-700">
                     {{ (att.totalExposure / 10000).toFixed(1) }}w

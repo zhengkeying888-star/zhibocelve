@@ -110,6 +110,8 @@ export interface LiveAttribution {
   name: string
   category: string
   line: LineType
+  grade: GradeType | null
+  suggestedGrade: GradeType | null
   totalExposure: number
   expectedLeads: number
   expectedFirstOrders: number

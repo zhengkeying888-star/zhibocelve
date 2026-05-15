@@ -871,7 +871,9 @@ export function parseLiveDetailSheet(
 
   const headers = rows[0].map((h: any) => normCell(h))
   const nameIdx = headers.findIndex((h) => h.includes('公开课名称') || h.includes('直播名称'))
-  const catIdx = headers.findIndex((h) => h === '品类' || h.includes('品类'))
+  const catIdx = headers.findIndex((h) =>
+    CATEGORY_KEYWORDS.some((kw) => h.toLowerCase().includes(kw.toLowerCase()))
+  )
   const statusIdx = headers.findIndex((h) => h.includes('直播状态名称'))
   const isTestIdx = headers.findIndex((h) => h.includes('是否新用户测试直播') || h.includes('新量测试'))
   const gmvIdx = headers.findIndex((h) => h === '总gmv' || h.includes('总gmv'))

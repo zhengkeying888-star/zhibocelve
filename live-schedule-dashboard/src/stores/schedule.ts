@@ -408,11 +408,14 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
       }
 
+      const suggestedGrade = historicalGradeSuggestion.value[liveCat] || null
       result.push({
         liveId: live.id,
         name: live.name,
         category: live.category,
         line: live.line,
+        grade: live.grade,
+        suggestedGrade,
         totalExposure,
         expectedLeads,
         expectedFirstOrders,
@@ -1077,10 +1080,13 @@ export const useScheduleStore = defineStore('schedule', () => {
       // Round 2: Distribute remaining unused segments in round-robin.
       // Each live gets one segment per iteration, so high-weight lives
       // accumulate more over time but no single live monopolizes the pool.
+      // Ceiling: stop at 2x target to prevent monopoly.
       let round2Changed = true
       while (round2Changed) {
         round2Changed = false
         for (const { live } of scored) {
+          const target = getTarget(live)
+          if (live.exposure >= target * 2) continue
           const allowedLines = getLiveAllowedLines(live)
           for (const line of allowedLines) {
             const best = pickBest(live, linePools[line])
