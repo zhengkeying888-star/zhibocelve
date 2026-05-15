@@ -755,14 +755,23 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
     }
 
-    // 3-day rule
-    const recent = combinedHistory.filter(
+    // 3-day rule: check history records AND already-assigned lives this week
+    const recentHistory = combinedHistory.filter(
       (h) =>
         h.category === seg.category &&
         h.timeRange === seg.timeRange &&
         daysBetween(h.date, live.date) < 3
     )
-    if (recent.length > 0) {
+    const recentWeek = liveStreams.value.filter(
+      (l) =>
+        l.id !== live.id &&
+        l.type !== 'fake' &&
+        l.assignedAudiences.some(
+          (a) => a.category === seg.category && a.timeRange === seg.timeRange
+        ) &&
+        daysBetween(l.date, live.date) < 3
+    )
+    if (recentHistory.length > 0 || recentWeek.length > 0) {
       reasons.push(`${seg.category} ${seg.timeRange} 3天内已被触达`)
     }
 
@@ -942,6 +951,9 @@ export const useScheduleStore = defineStore('schedule', () => {
         const hardMax = Math.max(0, target * 2 - live.exposure)
         const desiredCount = Math.min(seg.count, maxCount ?? seg.count, hardMax)
         if (desiredCount <= 0) return null
+
+        // Avoid excessive splitting: if we'd take less than 30% of the segment, skip it
+        if (desiredCount < seg.count * 0.3) return null
 
         let remaining: AudienceSegment | null = null
         if (desiredCount < seg.count) {
