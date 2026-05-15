@@ -149,6 +149,7 @@ const CATEGORY_ALIASES: Record<string, string> = {
   '亚健康': '亚健康管理',
   '私域': '私域',
   '古法居家': '古法居家养生',
+  '居家古法': '古法居家养生',
   '华佗肩颈': '华佗肩颈舒活功',
   '面部瑜伽': '面部瑜伽驻颜',
   '逆龄女神': '逆龄女神瑜伽',
@@ -170,7 +171,7 @@ export function normalizeCategory(name: string): string {
   if (CATEGORY_ALIASES[s]) return CATEGORY_ALIASES[s]
 
   // 3. Extract prefix before separator (e.g. "睡眠调理-五禽戏" → "睡眠调理")
-  const separators = ['-', '—', '–', '|', '·', '•']
+  const separators = ['-', '—', '–', '|', '·', '•', 'x', 'X', '×']
   for (const sep of separators) {
     const idx = s.indexOf(sep)
     if (idx > 0) {

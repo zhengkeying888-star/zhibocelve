@@ -783,7 +783,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     // 3-day rule: check history records AND already-assigned lives this week
     const recentHistory = combinedHistory.filter(
       (h) =>
-        h.category === seg.category &&
+        isSameCategoryFamily(h.category, seg.category) &&
         h.timeRange === seg.timeRange &&
         daysBetween(h.date, live.date) < 3
     )
@@ -792,7 +792,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         l.id !== live.id &&
         l.type !== 'fake' &&
         l.assignedAudiences.some(
-          (a) => a.category === seg.category && a.timeRange === seg.timeRange
+          (a) => isSameCategoryFamily(a.category, seg.category) && a.timeRange === seg.timeRange
         ) &&
         daysBetween(l.date, live.date) < 3
     )
@@ -804,7 +804,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     // those historical crowds cannot be re-assigned to this live.
     if (live.fakeHistoryAudiences && live.fakeHistoryAudiences.length > 0) {
       const matched = live.fakeHistoryAudiences.find(
-        (h) => h.category === seg.category && h.timeRange === seg.timeRange
+        (h) => isSameCategoryFamily(h.category, seg.category) && h.timeRange === seg.timeRange
       )
       if (matched) {
         reasons.push(`${seg.category} ${seg.timeRange} 为该直播历史复用人群，30天内不可再次复用`)
@@ -817,7 +817,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         l.id !== live.id &&
         l.type !== 'fake' &&
         l.date === live.date &&
-        l.assignedAudiences.some((a) => a.category === seg.category && a.timeRange === seg.timeRange)
+        l.assignedAudiences.some((a) => isSameCategoryFamily(a.category, seg.category) && a.timeRange === seg.timeRange)
     )
     if (sameWeek.length > 0) {
       reasons.push(`${seg.category} ${seg.timeRange} 当日已被分配`)
@@ -942,6 +942,11 @@ export const useScheduleStore = defineStore('schedule', () => {
         return !seg.assignedDates || seg.assignedDates.length === 0
       }
 
+      function isSegmentReusable(seg: AudienceSegment, liveDate: string): boolean {
+        if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
+        return daysBetween(seg.assignedDates[0], liveDate) >= 3
+      }
+
       function getRuleBoost(liveCategory: string, segCategory: string): number {
         const lc = normalizeCategory(liveCategory)
         const sc = normalizeCategory(segCategory)
@@ -995,8 +1000,9 @@ export const useScheduleStore = defineStore('schedule', () => {
           seg.count = desiredCount
         }
 
-        // Defensive: if segment is already assigned to another live, remove it first
-        if (seg.assignedTo && seg.assignedTo !== live.id) {
+        // When allowReuse is true, we are assigning the same segment to a
+        // second live (daysBetween >= 3). Do NOT remove it from the first live.
+        if (!allowReuse && seg.assignedTo && seg.assignedTo !== live.id) {
           const fromLive = liveStreams.value.find((l) => l.id === seg.assignedTo)
           if (fromLive) {
             const idx = fromLive.assignedAudiences.findIndex((a) => a.segmentId === seg.id)
@@ -1020,15 +1026,17 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
         live.assignedAudiences.push(assigned)
         live.exposure += seg.count
-        seg.status = 'used'
-        seg.assignedTo = live.id
+        if (!allowReuse) {
+          seg.status = 'used'
+          seg.assignedTo = live.id
+        }
         if (!seg.assignedDates) seg.assignedDates = []
         seg.assignedDates.push(live.date)
         live.conflictReasons.push(...conflicts)
         return remaining
       }
 
-      function pickBest(live: LiveStream, pool: AudienceSegment[]): AudienceSegment | null {
+      function pickBest(live: LiveStream, pool: AudienceSegment[], allowReuse: boolean = false): AudienceSegment | null {
         const excludedCats = getExcludedCats(live)
         // Use category FAMILY for counting so 太极s/A/BCD count as one "太极"
         const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
@@ -1040,8 +1048,17 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
 
         const eligible = pool.filter((seg) => {
-          if (seg.status !== 'available') return false
-          if (!isSegmentUnused(seg)) return false
+          // Round 1: only unused available segments
+          if (!allowReuse) {
+            if (seg.status !== 'available') return false
+            if (!isSegmentUnused(seg)) return false
+          } else {
+            // Round 2: allow unused available OR reusable used segments
+            const usable = (seg.status === 'available' && isSegmentUnused(seg)) ||
+              (seg.status === 'used' && isSegmentReusable(seg, live.date))
+            if (!usable) return false
+          }
+
           if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
           const conflicts = checkConflicts(live, seg)
           if (conflicts.length > 0) return false
@@ -1119,7 +1136,9 @@ export const useScheduleStore = defineStore('schedule', () => {
               const maxCount = Math.max(0, target - live.exposure)
               const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined)
               const idx = linePools[line].indexOf(best)
-              if (idx !== -1) linePools[line].splice(idx, 1)
+              // Keep the segment in pool for Round 2 reuse (first assignment)
+              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
+              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
               if (remaining) {
                 linePools[remaining.line].push(remaining)
               }
@@ -1131,10 +1150,12 @@ export const useScheduleStore = defineStore('schedule', () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
-      // Round 2: Distribute remaining unused segments in round-robin.
+      // Round 2: Distribute remaining unused AND reusable segments in round-robin.
       // Each live gets one segment per iteration, so high-weight lives
       // accumulate more over time but no single live monopolizes the pool.
       // Ceiling: stop at 2x target to prevent monopoly.
+      // Reuse is now allowed: segments assigned in Round 1 can be re-assigned
+      // to a different live as long as daysBetween >= 3.
       let round2Changed = true
       while (round2Changed) {
         round2Changed = false
@@ -1143,11 +1164,13 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (live.exposure >= target * 2) continue
           const allowedLines = getLiveAllowedLines(live)
           for (const line of allowedLines) {
-            const best = pickBest(live, linePools[line])
+            const best = pickBest(live, linePools[line], true)
             if (best) {
-              const remaining = tryAssign(live, best)
+              const remaining = tryAssign(live, best, undefined, true)
               const idx = linePools[line].indexOf(best)
-              if (idx !== -1) linePools[line].splice(idx, 1)
+              // Only remove from pool if the segment can no longer be reused
+              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
+              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
               if (remaining) {
                 linePools[remaining.line].push(remaining)
               }
@@ -1175,7 +1198,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (best) {
             const remaining = tryAssign(live, best)
             const idx = linePools[line].indexOf(best)
-            if (idx !== -1) linePools[line].splice(idx, 1)
+            const canStillReuse = best.assignedDates && best.assignedDates.length < 2
+            if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
             if (remaining) {
               linePools[remaining.line].push(remaining)
             }
@@ -1186,7 +1210,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         // Fallback: try reusable segments (already assigned on a different day)
         if (!assigned) {
-          const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
+          const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
           const reusable = audienceSegments.value.filter((seg) => {
             if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
             if (daysBetween(seg.assignedDates[0], live.date) < 3) return false
@@ -1194,7 +1218,7 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (!lines.includes(seg.line)) return false
             const excludedCats = getExcludedCats(live)
             if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
-            if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) return false
+            if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) return false
             const conflicts = checkConflicts(live, seg)
             if (conflicts.length > 0) return false
             return true
@@ -1212,7 +1236,8 @@ export const useScheduleStore = defineStore('schedule', () => {
             const remaining = tryAssign(live, best, undefined, true)
             for (const line of ['health', 'beauty', 'interest'] as LineType[]) {
               const idx = linePools[line].findIndex((s) => s.id === best.id)
-              if (idx !== -1) linePools[line].splice(idx, 1)
+              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
+              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
             }
             if (remaining) {
               linePools[remaining.line].push(remaining)
