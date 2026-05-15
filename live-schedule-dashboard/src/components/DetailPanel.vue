@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
+import { mergeAudiences } from '@/utils/exporter'
 import type { LineType } from '@/types'
 
 const store = useScheduleStore()
@@ -60,24 +61,21 @@ const selectedAttribution = computed(() => {
   return store.liveAttribution.find((a) => a.liveId === selectedLive.value!.id) || null
 })
 
-function removeAudience(segmentId: string) {
-  if (!selectedLive.value) return
-  store.removeAudience(selectedLive.value.id, segmentId)
-}
-
-function onDragStart(e: DragEvent, segmentId: string) {
-  if (e.dataTransfer) {
-    e.dataTransfer.setData('segmentId', segmentId)
-    e.dataTransfer.effectAllowed = 'move'
-  }
-}
-
 function getAudienceByLine(line: LineType) {
   return selectedLive.value?.assignedAudiences.filter((a) => a.line === line) || []
 }
 
-function getAttributionForAudience(segmentId: string) {
-  return selectedAttribution.value?.items.find((i) => i.segmentId === segmentId)
+function getMergedAudienceByLine(line: LineType) {
+  const items = getAudienceByLine(line)
+  return mergeAudiences(items)
+}
+
+function removeAudienceByCategory(category: string) {
+  if (!selectedLive.value) return
+  const toRemove = selectedLive.value.assignedAudiences.filter((a) => a.category === category)
+  for (const a of toRemove) {
+    store.removeAudience(selectedLive.value.id, a.segmentId)
+  }
 }
 
 function formatCount(n: number): string {
@@ -224,44 +222,26 @@ function formatGMV(n: number): string {
               {{ lineLabel[line] }}
             </div>
             <div
-              v-for="aud in getAudienceByLine(line)"
-              :key="aud.segmentId"
-              class="p-2 border rounded hover:border-slate-300 mb-1 cursor-move"
+              v-for="aud in getMergedAudienceByLine(line)"
+              :key="aud.category"
+              class="p-2 border rounded hover:border-slate-300 mb-1"
               :class="selectedLive.conflictReasons.some(r => r.includes(aud.category)) ? 'bg-red-50/30 border-red-200' : 'border-slate-200'"
-              draggable="true"
-              @dragstart="onDragStart($event, aud.segmentId)"
             >
               <div class="flex items-center justify-between mb-1">
                 <div class="flex items-center gap-2">
-                  <div class="w-1 h-3 rounded-full" :class="lineDotClass[aud.line]"></div>
+                  <div class="w-1 h-3 rounded-full" :class="lineDotClass[line]"></div>
                   <span class="text-sm text-slate-700">{{ aud.category }}</span>
                 </div>
                 <div class="flex items-center gap-2">
                   <span class="text-xs font-mono text-slate-600">{{ (aud.count / 10000).toFixed(1) }}w</span>
-                  <button class="text-slate-400 hover:text-red-600" @click="removeAudience(aud.segmentId)">
+                  <button class="text-slate-400 hover:text-red-600" @click="removeAudienceByCategory(aud.category)">
                     &times;
                   </button>
                 </div>
               </div>
-              <!-- Attribution mini row -->
-              <div
-                v-if="getAttributionForAudience(aud.segmentId)"
-                class="flex items-center gap-2 text-[10px] text-slate-500 pl-3 flex-wrap"
-              >
-                <span class="text-amber-600">跨科率 {{ (getAttributionForAudience(aud.segmentId)!.crossRate * 100).toFixed(1) }}%</span>
-                <span class="text-slate-300">|</span>
-                <span class="text-rose-600">首单转化 {{ (getAttributionForAudience(aud.segmentId)!.conversionRate * 100).toFixed(1) }}%</span>
-                <span class="text-slate-300">|</span>
-                <span class="text-emerald-600">LTV ¥{{ getAttributionForAudience(aud.segmentId)!.ltv.toLocaleString() }}</span>
-                <span class="text-slate-300">|</span>
-                <span class="text-blue-600">预计线索 {{ formatCount(getAttributionForAudience(aud.segmentId)!.expectedLeads) }}</span>
-                <span class="text-slate-300">|</span>
-                <span class="text-indigo-600">预计首单 {{ formatCount(getAttributionForAudience(aud.segmentId)!.expectedFirstOrders) }}</span>
-                <span class="text-slate-300">|</span>
-                <span class="text-purple-600">预计GMV {{ formatGMV(getAttributionForAudience(aud.segmentId)!.expectedGMV) }}</span>
-              </div>
+              <div class="text-[10px] text-slate-500 pl-3">{{ aud.timeRange }}</div>
             </div>
-            <div v-if="getAudienceByLine(line).length === 0" class="text-xs text-slate-400 py-1">
+            <div v-if="getMergedAudienceByLine(line).length === 0" class="text-xs text-slate-400 py-1">
               暂无分配
             </div>
           </div>

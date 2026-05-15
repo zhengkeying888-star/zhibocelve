@@ -1,10 +1,28 @@
 import * as XLSX from 'xlsx'
-import type { LiveStream, WeekDay } from '@/types'
+import type { LiveStream, WeekDay, AssignedAudience } from '@/types'
+
+export function mergeAudiences(items: AssignedAudience[]): { category: string; timeRange: string; count: number }[] {
+  const map = new Map<string, { category: string; timeRange: string; count: number }>()
+  for (const item of items) {
+    const key = item.category
+    const existing = map.get(key)
+    if (existing) {
+      existing.count += item.count
+      if (!existing.timeRange.split(' / ').includes(item.timeRange)) {
+        existing.timeRange = `${existing.timeRange} / ${item.timeRange}`
+      }
+    } else {
+      map.set(key, { category: item.category, timeRange: item.timeRange, count: item.count })
+    }
+  }
+  return Array.from(map.values())
+}
 
 function formatAudience(live: LiveStream, line: string): string {
   const items = live.assignedAudiences.filter((a) => a.line === line)
   if (items.length === 0) return ''
-  return items
+  const merged = mergeAudiences(items)
+  return merged
     .map((a) => `【存量】${a.timeRange} ${a.category}（${a.count.toLocaleString()}）`)
     .join('\n')
 }

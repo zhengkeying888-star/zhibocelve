@@ -886,6 +886,22 @@ export const useScheduleStore = defineStore('schedule', () => {
         ).length
       }
 
+      function getTimeRecencyScore(timeRange: string): number {
+        const parts = timeRange.split(/[-~—]/)
+        if (parts.length < 2) return 0
+        const endPart = parts[parts.length - 1].trim()
+        const match = endPart.match(/(\d{4})[年.]?(\d{1,2})[月.]?(\d{1,2})?/)
+        if (!match) return 0
+        const year = parseInt(match[1], 10)
+        const month = parseInt(match[2], 10) - 1
+        const day = match[3] ? parseInt(match[3], 10) : 1
+        const endDate = new Date(year, month, day)
+        const now = new Date()
+        const diffMs = now.getTime() - endDate.getTime()
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+        return -diffDays // 越新的 cohort 分数越高
+      }
+
       // tryAssign returns the remaining segment if a split occurred, so the
       // caller can push it back into the correct line pool.
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
@@ -952,6 +968,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
           const conflicts = checkConflicts(live, seg)
           if (conflicts.length > 0) return false
+          // Soft max 5 categories per live: once 5 categories are assigned, only pick from existing ones
+          if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) return false
           return true
         })
 
@@ -971,17 +989,22 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bRuleBoost = getRuleBoost(live.category, b.category)
           if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
 
-          // 3. Avoid duplicate categories (强制分散)
+          // 3. Prefer already-assigned categories (品类集中)
           const aDupCat = assignedCats.has(normalizeCategory(a.category))
           const bDupCat = assignedCats.has(normalizeCategory(b.category))
-          if (aDupCat !== bDupCat) return aDupCat ? 1 : -1
+          if (aDupCat !== bDupCat) return aDupCat ? -1 : 1
 
-          // 4. Avoid duplicate timeRanges
+          // 4. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
           const aDupRange = assignedRanges.has(a.timeRange)
           const bDupRange = assignedRanges.has(b.timeRange)
           if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
 
-          // 5. ROI / efficiency
+          // 5. Time recency: newer cohorts have higher quality users
+          const aRecency = getTimeRecencyScore(a.timeRange)
+          const bRecency = getTimeRecencyScore(b.timeRange)
+          if (aRecency !== bRecency) return bRecency - aRecency
+
+          // 6. ROI / efficiency
           if (hist && hist.avgExposure > 0) {
             const roi = hist.avgGMV / hist.avgExposure
             return (b.count * roi) - (a.count * roi)
