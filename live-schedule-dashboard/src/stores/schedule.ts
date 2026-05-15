@@ -152,14 +152,6 @@ export const useScheduleStore = defineStore('schedule', () => {
       return
     }
 
-    // Auto-reset on breaking change so old persisted assignments don't leak
-    const savedVersion = localStorage.getItem('schedule_data_version')
-    if (savedVersion !== DATA_VERSION) {
-      console.log('[Version] Data version mismatch:', savedVersion, '!==', DATA_VERSION, '→ auto-reset')
-      await resetAllData()
-      return
-    }
-
     isLoadingFromCloud = true
     const state = await loadScheduleState()
     if (state) {
@@ -201,6 +193,14 @@ export const useScheduleStore = defineStore('schedule', () => {
   let unsubscribeChanges = subscribeToChanges(() => {
     loadFromCloud()
   })
+
+  // Sync version check BEFORE async cloud load so stale data is cleared immediately
+  const savedVersion = localStorage.getItem('schedule_data_version')
+  if (savedVersion !== DATA_VERSION) {
+    console.log('[Version] Sync mismatch:', savedVersion, '!==', DATA_VERSION, '→ auto-reset')
+    resetAllData()
+    // resetAllData reloads the page, so code below won't run
+  }
 
   loadFromCloud()
 
@@ -311,12 +311,14 @@ export const useScheduleStore = defineStore('schedule', () => {
             const segGMV = liveExpectedGMV * ratio
             const segFirstOrders = liveExpectedFirstOrders * ratio
             const segLeads = liveExpectedLeads * ratio
+            const audCat = normalizeCategory(aud.category)
+            const isVertical = isSameCategoryFamily(audCat, liveCat)
             items.push({
               segmentId: aud.segmentId,
               category: aud.category,
               line: aud.line,
               count: aud.count,
-              crossRate: 0,
+              crossRate: isVertical ? 1.0 : 0,
               conversionRate: hist.avgConversionRate,
               ltv: hist.avgFirstOrders > 0 ? hist.avgGMV / hist.avgFirstOrders : 0,
               expectedLeads: segLeads,
@@ -975,6 +977,11 @@ export const useScheduleStore = defineStore('schedule', () => {
         const assignedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
         const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
 
+        // Debug: log when category limit is active
+        if (assignedCats.size >= 5) {
+          console.log(`[pickBest] ${live.name} has ${assignedCats.size} cats, limiting to existing:`, Array.from(assignedCats))
+        }
+
         const eligible = pool.filter((seg) => {
           if (seg.status !== 'available') return false
           if (!isSegmentUnused(seg)) return false
@@ -982,7 +989,10 @@ export const useScheduleStore = defineStore('schedule', () => {
           const conflicts = checkConflicts(live, seg)
           if (conflicts.length > 0) return false
           // Soft max 5 categories per live: once 5 categories are assigned, only pick from existing ones
-          if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) return false
+          if (assignedCats.size >= 5 && !assignedCats.has(normalizeCategory(seg.category))) {
+            console.log(`[pickBest] ${live.name} SKIP ${normalizeCategory(seg.category)} (limit reached)`)
+            return false
+          }
           return true
         })
 
