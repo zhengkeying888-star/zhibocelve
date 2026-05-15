@@ -936,7 +936,11 @@ export const useScheduleStore = defineStore('schedule', () => {
       // caller can push it back into the correct line pool.
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
         if (seg.status !== 'available' && !allowReuse) return null
-        const desiredCount = Math.min(seg.count, maxCount ?? seg.count)
+        // Hard ceiling: never exceed 2x target exposure, regardless of caller logic
+        const target = getTarget(live)
+        if (live.exposure >= target * 2) return null
+        const hardMax = Math.max(0, target * 2 - live.exposure)
+        const desiredCount = Math.min(seg.count, maxCount ?? seg.count, hardMax)
         if (desiredCount <= 0) return null
 
         let remaining: AudienceSegment | null = null
