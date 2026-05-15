@@ -1,21 +1,59 @@
 import * as XLSX from 'xlsx'
 import type { LiveStream, WeekDay, AssignedAudience } from '@/types'
 
+function parseDateFromString(s: string): Date | null {
+  const m = s.match(/(\d{4})[年.]?(\d{1,2})[月.]?(\d{1,2})?[日]?/)
+  if (!m) return null
+  const year = parseInt(m[1], 10)
+  const month = parseInt(m[2], 10) - 1
+  const day = m[3] ? parseInt(m[3], 10) : 1
+  return new Date(year, month, day)
+}
+
+function formatMergedDate(d: Date): string {
+  const year = d.getFullYear()
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  if (day === 1) return `${year}年${month}月`
+  return `${year}年${month}月${day}日`
+}
+
+function mergeTimeRanges(ranges: string[]): string {
+  let minDate: Date | null = null
+  let maxDate: Date | null = null
+  for (const range of ranges) {
+    const parts = range.split(/[-~—]/)
+    if (parts.length < 2) continue
+    const start = parseDateFromString(parts[0].trim())
+    const end = parseDateFromString(parts[parts.length - 1].trim())
+    if (start && (!minDate || start < minDate)) minDate = start
+    if (end && (!maxDate || end > maxDate)) maxDate = end
+  }
+  if (minDate && maxDate) {
+    return `${formatMergedDate(minDate)}—${formatMergedDate(maxDate)}`
+  }
+  return ranges.join(' / ')
+}
+
 export function mergeAudiences(items: AssignedAudience[]): { category: string; timeRange: string; count: number }[] {
-  const map = new Map<string, { category: string; timeRange: string; count: number }>()
+  const map = new Map<string, { category: string; timeRanges: string[]; count: number }>()
   for (const item of items) {
     const key = item.category
     const existing = map.get(key)
     if (existing) {
       existing.count += item.count
-      if (!existing.timeRange.split(' / ').includes(item.timeRange)) {
-        existing.timeRange = `${existing.timeRange} / ${item.timeRange}`
+      if (!existing.timeRanges.includes(item.timeRange)) {
+        existing.timeRanges.push(item.timeRange)
       }
     } else {
-      map.set(key, { category: item.category, timeRange: item.timeRange, count: item.count })
+      map.set(key, { category: item.category, timeRanges: [item.timeRange], count: item.count })
     }
   }
-  return Array.from(map.values())
+  return Array.from(map.values()).map(({ category, timeRanges, count }) => ({
+    category,
+    timeRange: mergeTimeRanges(timeRanges),
+    count,
+  }))
 }
 
 function formatAudience(live: LiveStream, line: string): string {
