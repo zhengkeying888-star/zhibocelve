@@ -37,3 +37,7 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Scripts secrets
+scripts/config.json
+scripts/.env.local
