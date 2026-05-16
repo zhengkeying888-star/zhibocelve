@@ -12,7 +12,7 @@ import type {
 } from '@/types'
 import { normalizeCategory, parseLineFromCategory } from './categoryMapping'
 
-function generateId() {
+export function generateId() {
   return Math.random().toString(36).substring(2, 10)
 }
 

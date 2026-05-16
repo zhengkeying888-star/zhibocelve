@@ -65,36 +65,24 @@ function formatAudience(live: LiveStream, line: string): string {
     .join('\n')
 }
 
-export function exportSchedule(
+const slotTypes = [
+  { slot: 'morning', label: '【早间】晨练' },
+  { slot: 'evening', label: '【晚间】晚IP专场' },
+  { slot: 'fake-morning', label: '【伪直播】早播' },
+  { slot: 'fake-evening', label: '【伪直播】晚播' },
+  { slot: 'friend-circle', label: '朋友圈宣发' },
+]
+
+const lines = [
+  { key: 'health' as const, label: '健康线' },
+  { key: 'beauty' as const, label: '变美线' },
+  { key: 'interest' as const, label: '兴趣线' },
+]
+
+export function buildExportMatrix(
   lives: LiveStream[],
-  weekDays: WeekDay[],
-  weekTitle: string
-): void {
-  const wb = XLSX.utils.book_new()
-
-  // Build matrix structure
-  // Rows: for each slot type, we have:
-  // 1. 直播资源位分布行
-  // 2. 文案负责人行
-  // 3. 曝光量级行
-  // 4. 健康线宣发行
-  // 5. 变美线宣发行
-  // 6. 兴趣线宣发行
-
-  const slotTypes = [
-    { slot: 'morning', label: '【早间】晨练' },
-    { slot: 'evening', label: '【晚间】晚IP专场' },
-    { slot: 'fake-morning', label: '【伪直播】早播' },
-    { slot: 'fake-evening', label: '【伪直播】晚播' },
-    { slot: 'friend-circle', label: '朋友圈宣发' },
-  ]
-
-  const lines = [
-    { key: 'health', label: '健康线' },
-    { key: 'beauty', label: '变美线' },
-    { key: 'interest', label: '兴趣线' },
-  ] as const
-
+  weekDays: WeekDay[]
+): { data: (string | number)[][]; colWidths: { wch: number }[]; rowHeights: { hpt: number }[] } {
   const data: (string | number)[][] = []
 
   // Header row
@@ -148,17 +136,12 @@ export function exportSchedule(
     data.push(['', '', ...weekDays.map(() => '')])
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(data)
-
-  // Set column widths
   const colWidths = [
-    { wch: 16 }, // 资源位标签
-    { wch: 14 }, // 行标签
+    { wch: 16 },
+    { wch: 14 },
     ...weekDays.map(() => ({ wch: 28 })),
   ]
-  ws['!cols'] = colWidths
 
-  // Set row heights for multi-line cells
   const rowHeights = data.map((row) => {
     const maxLines = Math.max(
       ...row.map((cell) => {
@@ -170,8 +153,20 @@ export function exportSchedule(
     )
     return { hpt: Math.max(18, maxLines * 14) }
   })
-  ws['!rows'] = rowHeights
 
+  return { data, colWidths, rowHeights }
+}
+
+export function exportSchedule(
+  lives: LiveStream[],
+  weekDays: WeekDay[],
+  weekTitle: string
+): void {
+  const wb = XLSX.utils.book_new()
+  const { data, colWidths, rowHeights } = buildExportMatrix(lives, weekDays)
+  const ws = XLSX.utils.aoa_to_sheet(data)
+  ws['!cols'] = colWidths
+  ws['!rows'] = rowHeights
   XLSX.utils.book_append_sheet(wb, ws, weekTitle)
   XLSX.writeFile(wb, `直播排期策略表_${weekTitle}.xlsx`)
 }

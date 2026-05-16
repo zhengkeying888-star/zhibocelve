@@ -133,3 +133,10 @@ export interface WeekDay {
   date: string
   fullDate: string
 }
+
+export interface FeishuConfig {
+  appId: string
+  appSecret: string
+  baseUrl?: string // e.g. https://xxx.feishu.cn/base/xxx
+  targetSpreadsheetUrl?: string
+}

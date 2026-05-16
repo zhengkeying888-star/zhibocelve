@@ -19,6 +19,7 @@ import { normalizeCategory, isSameCategoryFamily, parseLineFromCategory, getCate
 import { validateSchedule } from '@/utils/scheduleValidator'
 import { loadScheduleState, saveScheduleState, subscribeToChanges, clearScheduleState } from '@/lib/cloudSync'
 import type { ScheduleState } from '@/lib/cloudSync'
+import type { FeishuConfig } from '@/types'
 import { DEFAULT_CATEGORY_LINES, DEFAULT_CATEGORY_GRADES } from '@/lib/defaultCategoryMappings'
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -72,6 +73,9 @@ export const useScheduleStore = defineStore('schedule', () => {
   const categoryLines = ref<Record<string, LineType>>({ ...DEFAULT_CATEGORY_LINES })
   const nameOverrides = ref<Record<string, { category: string; line: LineType }>>({})
 
+  // Feishu integration config
+  const feishuConfig = ref<FeishuConfig | null>(null)
+
   // Global calibration multiplier (temporary fix for crossRate underestimation)
   const gmvMultiplier = ref(18)
 
@@ -123,6 +127,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   function deserializeState(state: ScheduleState) {
     if (state.learnedRules) learnedRules.value = state.learnedRules
+    if ((state as any).feishuConfig) feishuConfig.value = (state as any).feishuConfig
     if (state.currentWeek) currentWeek.value = state.currentWeek
     if (state.weekDays) weekDays.value = state.weekDays
     if (state.liveStreams) {
@@ -174,6 +179,11 @@ export const useScheduleStore = defineStore('schedule', () => {
       if (Object.keys(savedStats).length > 0) {
         categoryHistoricalStats.value = savedStats
         console.log('[Local] Loaded categoryHistoricalStats:', Object.keys(savedStats))
+      }
+      const savedFeishu = loadFromStorage<FeishuConfig | null>('schedule.feishuConfig', null)
+      if (savedFeishu) {
+        feishuConfig.value = savedFeishu
+        console.log('[Local] Loaded feishuConfig')
       }
     }
     isLoadingFromCloud = false
@@ -596,6 +606,15 @@ export const useScheduleStore = defineStore('schedule', () => {
   function setNameOverride(name: string, category: string, line: LineType) {
     const canonical = normalizeCategory(category)
     nameOverrides.value[name] = { category: canonical, line }
+  }
+
+  function setFeishuConfig(config: FeishuConfig | null) {
+    feishuConfig.value = config
+    if (config) {
+      localStorage.setItem('schedule.feishuConfig', JSON.stringify(config))
+    } else {
+      localStorage.removeItem('schedule.feishuConfig')
+    }
   }
 
   function removeNameOverride(name: string) {
@@ -1448,6 +1467,8 @@ export const useScheduleStore = defineStore('schedule', () => {
     categoryLines.value = { ...DEFAULT_CATEGORY_LINES }
     nameOverrides.value = {}
     gmvMultiplier.value = 18
+    feishuConfig.value = null
+    localStorage.removeItem('schedule.feishuConfig')
 
     // Clear cloud + localStorage
     await clearScheduleState()
@@ -1480,6 +1501,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     scaleFactor,
     historicalGradeSuggestion,
     categoryHistoricalStats,
+    feishuConfig,
     setSelectedLive,
     updateUploadStatus,
     setLiveStreams,
@@ -1498,6 +1520,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     setCategoryGrade,
     setCategoryLine,
     setNameOverride,
+    setFeishuConfig,
     removeNameOverride,
     applyCategoryGrades,
     applyNameOverrides,

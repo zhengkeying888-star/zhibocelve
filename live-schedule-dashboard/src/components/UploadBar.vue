@@ -5,11 +5,13 @@ import UploadModal from './UploadModal.vue'
 import CategoryManager from './CategoryManager.vue'
 import AttributionPanel from './AttributionPanel.vue'
 import { exportSchedule } from '@/utils/exporter'
+import FeishuSyncModal from './FeishuSyncModal.vue'
 
 const store = useScheduleStore()
 const showModal = ref(false)
 const showCategoryManager = ref(false)
 const showAttribution = ref(false)
+const showFeishuSync = ref(false)
 
 async function handleAutoSchedule() {
   await store.autoSchedule()
@@ -73,6 +75,12 @@ function onModalDone() {
         <span>&#8634;</span> 重置数据
       </button>
       <button
+        @click="showFeishuSync = true"
+        class="text-sm text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors h-8"
+      >
+        <span>&#9993;</span> 飞书同步
+      </button>
+      <button
         @click="handleExport"
         class="text-sm text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 px-3 py-1.5 rounded flex items-center gap-1.5 transition-colors h-8"
       >
@@ -99,5 +107,9 @@ function onModalDone() {
   <AttributionPanel
     :open="showAttribution"
     @close="showAttribution = false"
+  />
+  <FeishuSyncModal
+    :open="showFeishuSync"
+    @close="showFeishuSync = false"
   />
 </template>
