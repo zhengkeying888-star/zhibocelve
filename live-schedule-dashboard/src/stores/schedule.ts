@@ -781,9 +781,12 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
 
     // 3-day rule: check history records AND already-assigned lives this week
+    // PRD v3.3: 频控用 normalizeCategory 精确品类名，不用 isSameCategoryFamily。
+    // 原因：太极BCD/太极SA/太极A 是同一 family 但不同用户等级段，3天内应允许分别触达。
+    const normSegCat = normalizeCategory(seg.category)
     const recentHistory = combinedHistory.filter(
       (h) =>
-        isSameCategoryFamily(h.category, seg.category) &&
+        normalizeCategory(h.category) === normSegCat &&
         h.timeRange === seg.timeRange &&
         daysBetween(h.date, live.date) < 3
     )
@@ -792,7 +795,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         l.id !== live.id &&
         l.type !== 'fake' &&
         l.assignedAudiences.some(
-          (a) => isSameCategoryFamily(a.category, seg.category) && a.timeRange === seg.timeRange
+          (a) => normalizeCategory(a.category) === normSegCat && a.timeRange === seg.timeRange
         ) &&
         daysBetween(l.date, live.date) < 3
     )
@@ -804,7 +807,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     // those historical crowds cannot be re-assigned to this live.
     if (live.fakeHistoryAudiences && live.fakeHistoryAudiences.length > 0) {
       const matched = live.fakeHistoryAudiences.find(
-        (h) => isSameCategoryFamily(h.category, seg.category) && h.timeRange === seg.timeRange
+        (h) => normalizeCategory(h.category) === normSegCat && h.timeRange === seg.timeRange
       )
       if (matched) {
         reasons.push(`${seg.category} ${seg.timeRange} 为该直播历史复用人群，30天内不可再次复用`)
@@ -817,7 +820,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         l.id !== live.id &&
         l.type !== 'fake' &&
         l.date === live.date &&
-        l.assignedAudiences.some((a) => isSameCategoryFamily(a.category, seg.category) && a.timeRange === seg.timeRange)
+        l.assignedAudiences.some((a) => normalizeCategory(a.category) === normSegCat && a.timeRange === seg.timeRange)
     )
     if (sameWeek.length > 0) {
       reasons.push(`${seg.category} ${seg.timeRange} 当日已被分配`)
@@ -902,6 +905,11 @@ export const useScheduleStore = defineStore('schedule', () => {
           const hist = findHistoricalStat(liveCat)
           if (hist) {
             score += Math.min(hist.avgGMV / 20000, 5)
+          }
+
+          // 数字人 / 录播 优先级降权
+          if (live.name.includes('数字人') || live.name.includes('录播')) {
+            score -= 20
           }
 
           return { live, score }

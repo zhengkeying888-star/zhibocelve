@@ -126,12 +126,19 @@ function extractLink(line: string): string {
 }
 
 function inferCategory(name: string): string {
+  // 直播名硬映射（无品类前缀时的兜底推断）
+  const LIVE_NAME_TO_CATEGORY: Record<string, string> = {
+    '唱歌李燃': '国际声乐',
+  }
+  const directMap = LIVE_NAME_TO_CATEGORY[name.trim()]
+  if (directMap) return directMap
+
   // Normalize using the canonical mapping system
   const normalized = normalizeCategory(name)
   if (normalized !== name.trim()) return normalized
 
   // Fallback: extract prefix before separator (e.g. "摄影美学-段晓晖单人" → "摄影美学")
-  const separators = ['-', '—', '–', '|', '·', '•']
+  const separators = ['-', '—', '–', '|', '·', '•', '、']
   for (const sep of separators) {
     const idx = name.indexOf(sep)
     if (idx > 0) {
