@@ -138,6 +138,14 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '君合太极晨练': 'S',
   '睡眠调理晨练': 'A',
   '2025.5.16健康营养': 'S',
+  '国际声乐': 'S',
+  '摄影美学': 'S',
+  // 用户 2026-05-17 明确指定（不准改动）
+  '一杰瑜伽晨练+五禽戏': 'A',
+  '逆龄女神瑜伽': 'A',
+  '懒人吃瘦（女版）': 'A',
+  '相机摄影-助教罐头': 'A',
+  '短视频李扬': 'S',
 }
 
 export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
@@ -611,17 +619,22 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   return results
 }
 
-// Find the row index where col0 === '星期' (header row)
+// Find the row index where any of cols 0-2 === '星期' (header row)
+// Some sheets have structural labels in col 0 and '星期' in col 1 or 2.
 function findHeaderRow(json: any[][]): number {
   for (let r = 0; r < Math.min(json.length, 10); r++) {
-    if (normCell(json[r]?.[0]) === '星期') return r
+    for (let c = 0; c < 3; c++) {
+      if (normCell(json[r]?.[c]) === '星期') return r
+    }
   }
   return -1
 }
 
 function findDateRow(json: any[][], startFrom: number): number {
   for (let r = startFrom; r < Math.min(json.length, startFrom + 3); r++) {
-    if (normCell(json[r]?.[0]) === '日期') return r
+    for (let c = 0; c < 3; c++) {
+      if (normCell(json[r]?.[c]) === '日期') return r
+    }
   }
   return -1
 }
