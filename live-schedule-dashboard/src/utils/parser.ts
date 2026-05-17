@@ -125,10 +125,51 @@ function extractLink(line: string): string {
   return link
 }
 
+// 名师/IP 直播名硬映射（影响 grade 和 audience 段数上限）
+const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
+  '唱歌李燃': 'S',
+  '懒人吃瘦IP田珂': 'S',
+  '段晓晖': 'S',
+  '田珂': 'A',
+  '唐一杰': 'A',
+  '2026.4.2唐一杰': 'S',
+  '李扬': 'S',
+  '居家古法养生': 'S',
+  '君合太极晨练': 'S',
+  '睡眠调理晨练': 'A',
+  '2025.5.16健康营养': 'S',
+}
+
+export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
+  const direct = LIVE_NAME_TO_GRADE[name.trim()]
+  if (direct) return direct
+
+  // 子串匹配：直播名包含已知名师人名
+  for (const [key, grade] of Object.entries(LIVE_NAME_TO_GRADE)) {
+    if (name.includes(key)) return grade
+  }
+
+  // 含 "IP" 字样的一般是名师/重点直播
+  if (name.includes('IP')) return 'A'
+
+  // 纯人名判定：无法推断出品类的名字，且不是常见标记词
+  const normalized = normalizeCategory(name)
+  if (normalized === name.trim() && name.length >= 2 && !name.includes('直播') && !name.includes('复用')) {
+    return 'A'
+  }
+
+  return null
+}
+
 function inferCategory(name: string): string {
   // 直播名硬映射（无品类前缀时的兜底推断）
   const LIVE_NAME_TO_CATEGORY: Record<string, string> = {
     '唱歌李燃': '国际声乐',
+    '段晓晖': '摄影美学',
+    '李扬': '短视频',
+    '田珂': '懒人吃瘦',
+    '唐一杰': '一杰瑜伽',
+    '2026.4.2唐一杰': '一杰瑜伽',
   }
   const directMap = LIVE_NAME_TO_CATEGORY[name.trim()]
   if (directMap) return directMap
@@ -198,6 +239,36 @@ function inferCategory(name: string): string {
 
 function hasDayData(row: any[], startCol = 2): boolean {
   return row.slice(startCol, 9).some((c: any) => normCell(c) !== '')
+}
+
+// Check whether a row consists purely of audience-assignment data
+// (time ranges or category(count) patterns) with no live-info mixed in.
+function isAudienceDataRow(row: any[], startCol = 2): boolean {
+  let hasAudiencePattern = false
+  let hasNonAudiencePattern = false
+  for (let col = startCol; col <= 8; col++) {
+    const cell = normCell(row[col])
+    if (!cell) continue
+    const lines = cell.split('\n').map((l: string) => l.trim()).filter(Boolean)
+    for (const line of lines) {
+      // Time range pattern: 2023年1月—2026年5月10日 or 2023.1-2025.4.13
+      if (/^\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*?$/.test(line)) {
+        hasAudiencePattern = true
+        continue
+      }
+      // Audience count pattern: 品类(人数) or 品类（人数）
+      const match = line.match(/^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/)
+      if (match) {
+        const count = parseInt(match[2].replace(/,/g, ''), 10)
+        if (!isNaN(count) && count > 100) {
+          hasAudiencePattern = true
+          continue
+        }
+      }
+      hasNonAudiencePattern = true
+    }
+  }
+  return hasAudiencePattern && !hasNonAudiencePattern
 }
 
 function isBlockHeaderRow(col0: string): boolean {
@@ -339,19 +410,33 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     if (/^\d+\.\d+$/.test(line) && parseFloat(line) < 1) {
       continue
     }
+    // Skip audience-assignment patterns: time ranges (e.g. 2023年1月—2026年5月10日)
+    // and category(count) lines (e.g. 五禽戏（127104） or 太极BCD(279756))
+    if (/^\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*?$/.test(line)) {
+      continue
+    }
+    const audMatch = line.match(/^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/)
+    if (audMatch) {
+      const count = parseInt(audMatch[2].replace(/,/g, ''), 10)
+      if (!isNaN(count) && count > 100) {
+        continue
+      }
+    }
     liveNames.push(line)
   }
 
-  // 早间晨练：同单元格多行 = 一场联合直播（PRD v2.0）
-  if (slot === 'morning' && liveNames.length > 1) {
+  // 同单元格多行 = 一场联合直播（PRD v2.0，原为早间专享，现扩展至全时段）
+  // 非早间时段要求至少 2 个可识别品类名，避免把备注行误判为联合直播
+  const recognizableCount = liveNames.filter(n => inferCategory(n) !== n).length
+  if (liveNames.length > 1 && (slot === 'morning' || recognizableCount >= 2)) {
     const categories = liveNames.map(name => inferCategory(name.replace('晨练', '').trim()))
     const linesList = categories.map(cat => parseLine(cat))
     const primaryCategory = categories[0]
     const primaryLine = linesList[0]
     const uniqueLines = Array.from(new Set(linesList)) as LineType[]
 
-    const startTime = timeMatches.length > 0 ? timeMatches[0].start : '07:30'
-    const endTime = timeMatches.length > 0 ? timeMatches[timeMatches.length - 1].end : '10:00'
+    const startTime = timeMatches.length > 0 ? timeMatches[0].start : (slot.includes('morning') ? '07:30' : '19:00')
+    const endTime = timeMatches.length > 0 ? timeMatches[timeMatches.length - 1].end : (slot.includes('morning') ? '10:00' : '21:00')
 
     let link = ''
     for (const line of lines) {
@@ -494,7 +579,8 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     }
   }
 
-  const lineType = parseLine(name)
+  const inferredCategory = inferCategory(name)
+  const lineType = parseLine(inferredCategory)
 
   const results: LiveStream[] = []
 
@@ -506,7 +592,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
       date: day.date,
       type: 'real',
-      category: inferCategory(name),
+      category: inferredCategory,
       line: lineType,
       slot,
       grade: null,
@@ -1032,7 +1118,28 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
   const dateRow = json[dateRowIdx] || []
 
   // Detect whether day columns start from col 1 (some sheets have Monday in col 1)
-  const startCol = (normCell(headerRow[1]) !== '' && normCell(dateRow[1]) !== '') ? 1 : 2
+  // Validate that col 1 actually contains a weekday label and a date value,
+  // otherwise fall back to col 2 to avoid treating structural labels (e.g.
+  // "直播资源位分布") as data columns.
+  function isWeekDayLabel(v: string): boolean {
+    return /周[一二三四五六日]|星期[一二三四五六日]|Mon|Tue|Wed|Thu|Fri|Sat|Sun/i.test(v)
+  }
+  function isDateValue(v: string): boolean {
+    return /^\d{1,2}[.\/]\d{1,2}$/.test(v) || /^\d{4}-\d{2}-\d{2}$/.test(v)
+  }
+  // Robust startCol detection: scan cols 1-3 for the first weekday label paired
+  // with a non-empty date cell. This handles browser-side xlsx parsing differences
+  // where date cells may be formatted differently than in Node.
+  let startCol = 2
+  for (let col = 1; col <= 3 && col < headerRow.length; col++) {
+    const label = normCell(headerRow[col])
+    const dateVal = normCell(dateRow[col])
+    if (isWeekDayLabel(label) && (isDateValue(dateVal) || dateVal !== '')) {
+      startCol = col
+      break
+    }
+  }
+  console.log('[Parser Debug] startCol=', startCol, 'headerRow[1]=', normCell(headerRow[1]), 'dateRow[1]=', normCell(dateRow[1]))
 
   for (let col = startCol; col < headerRow.length && col <= 8; col++) {
     const label = normCell(headerRow[col])
@@ -1041,6 +1148,7 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
       weekDays.push({ label, date: dateVal, fullDate: buildFullDate(sheetName || '', dateVal, fileName) })
     }
   }
+  console.log('[Parser Debug] weekDays=', weekDays.map(d => d.date).join(','), 'length=', weekDays.length)
 
   let currentSlot: SlotType = 'morning'
   let rowIdx = dateRowIdx + 1
@@ -1149,6 +1257,9 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
         continue
       }
 
+      // Stop at audience-data rows (they belong to the assignment block below the live names)
+      if (isAudienceDataRow(curRow, startCol) && r > rowIdx) break
+
       liveInfoRows.push(curRow)
       r++
     }
@@ -1179,6 +1290,24 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
     // completed schedules where audience data is written directly below live names).
     if (!anyLiveParsed && liveInfoRows.length > 0) {
       parseAudienceAssignmentBlock(liveInfoRows, weekDays, currentSlot, lives, startCol)
+    }
+
+    // Collect trailing audience rows that follow the live-info rows
+    // (common in completed schedules without explicit line labels)
+    const trailingAudienceRows: any[][] = []
+    while (r < json.length) {
+      const curRow = json[r]
+      if (!curRow || curRow.length < 3) { r++; continue }
+      const c0 = normCell(curRow[0])
+      const c1 = normCell(curRow[1])
+      if (isBlockHeaderRow(c0)) break
+      if (isMetadataRow(c0, c1) && (c1 === '文案负责人' || c1 === '曝光量级' || c1 === '健康线' || c1 === '变美线' || c1 === '兴趣线')) break
+      if (!isAudienceDataRow(curRow, startCol)) break
+      trailingAudienceRows.push(curRow)
+      r++
+    }
+    if (trailingAudienceRows.length > 0) {
+      parseAudienceAssignmentBlock(trailingAudienceRows, weekDays, currentSlot, lives, startCol)
     }
 
     // After live-info rows, there may be metadata rows before the next block.

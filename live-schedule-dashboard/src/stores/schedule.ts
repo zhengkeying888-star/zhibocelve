@@ -16,6 +16,7 @@ import type {
   AttributionItem,
 } from '@/types'
 import { normalizeCategory, isSameCategoryFamily, parseLineFromCategory, getCategoryFamily } from '@/utils/categoryMapping'
+import { inferGrade } from '@/utils/parser'
 import { validateSchedule } from '@/utils/scheduleValidator'
 import { loadScheduleState, saveScheduleState, subscribeToChanges, clearScheduleState } from '@/lib/cloudSync'
 import type { ScheduleState } from '@/lib/cloudSync'
@@ -34,7 +35,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 export const useScheduleStore = defineStore('schedule', () => {
   // Breaking-change data version: bump this whenever autoSchedule logic changes
   // in a way that makes old persisted assignments invalid.
-  const DATA_VERSION = 'v3.3-reuse-and-family-conflicts'
+  const DATA_VERSION = 'v3.4-line-round-robin-and-low-weight-cap'
 
   // ========== State ==========
   const liveStreams = ref<LiveStream[]>([])
@@ -82,12 +83,23 @@ export const useScheduleStore = defineStore('schedule', () => {
   // PRD v2.0: neutral categories that can cross beauty → health
   const NEUTRAL_CATEGORIES = new Set(['一杰瑜伽', '东方养正瑜伽'])
 
-  // PRD v2.0 target exposure
+  // Adjusted target exposure based on actual human scheduling behavior.
+  // Human schedules do not stop at fixed targets; famous hosts get as many
+  // segments as available. These values are raised so the system does not
+  // artificially cap分配 too early.
   const TARGET_EXPOSURE: Record<string, number> = {
-    S: 350000,
-    A: 220000,
-    B: 150000,
-    C: 120000,
+    S: 600000,
+    A: 500000,
+    B: 350000,
+    C: 250000,
+  }
+
+  // Max segments per live by grade (human rule: famous hosts = more segments)
+  const MAX_SEGMENTS_BY_GRADE: Record<string, number> = {
+    S: 8,
+    A: 7,
+    B: 5,
+    C: 5,
   }
 
   // Learned rules from manual adjustments
@@ -648,7 +660,13 @@ export const useScheduleStore = defineStore('schedule', () => {
 
       const canonical = normalizeCategory(live.category)
       const grade = categoryGrades.value[canonical]
-      if (grade) live.grade = grade
+      if (grade) {
+        live.grade = grade
+      } else {
+        // Fallback: infer grade from live name (famous host / IP detection)
+        const inferred = inferGrade(live.name)
+        if (inferred) live.grade = inferred
+      }
       const line = categoryLines.value[canonical]
       if (line) live.line = line
     }
@@ -890,19 +908,13 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
       }
 
-      // Cross-pref helper (used when no historical stats available)
-      function getCrossPref(audienceCat: string, liveCat: string, timeRange: string): { crossRate: number; conversionRate: number; ltv: number } {
-        const cohortMonth = extractCohortMonth(timeRange)
-        if (isSameCategoryFamily(audienceCat, liveCat)) {
-          return { crossRate: 1.0, conversionRate: 1.0, ltv: 80 }
-        }
-        const pref = findCrossPref(audienceCat, liveCat, cohortMonth)
-        if (pref) {
-          const crossRate = pref.crossRate || 0
-          const conversionRate = (pref.conversionRate || 0) > 0 ? pref.conversionRate : 1
-          return { crossRate, conversionRate, ltv: pref.ltv || 0 }
-        }
-        return { crossRate: 0, conversionRate: 1, ltv: 0 }
+      function isLowWeightLive(live: LiveStream): boolean {
+        return live.name.includes('数字人') || live.name.includes('录播') || live.name.includes('开心太极')
+      }
+
+      function getLowWeightLimit(live: LiveStream): { maxSegments: number; maxExposure: number } | null {
+        if (isLowWeightLive(live)) return { maxSegments: 1, maxExposure: 200000 }
+        return null
       }
 
       // Score and sort lives by weight
@@ -911,25 +923,17 @@ export const useScheduleStore = defineStore('schedule', () => {
         .filter((live) => live.slot !== 'friend-circle' && live.type !== 'fake')
         .map((live) => {
           let score = GRADE_SCORE[live.grade || ''] ?? 10
-          if (live.slot === 'evening' || live.slot === 'fake-evening') score += 50
-          else if (live.slot === 'morning' || live.slot === 'fake-morning') score += 30
-          else score += 10
+          if (live.slot === 'evening') score += 50
+          else if (live.slot === 'morning') score += 30
+          else if (live.slot === 'fake-evening') score += 15
+          else if (live.slot === 'fake-morning') score += 10
+          else score += 5
 
-          const fakeHist = fakeLiveHistory.value.find(
-            (f) => f.name === live.name && f.category === live.category
-          )
-          if (fakeHist) score += fakeHist.conversionRate * 100
+          // 名师/IP 直播适当加权
+          if (live.grade === 'S') score += 10
 
-          const liveCat = normalizeCategory(live.category)
-          const hist = findHistoricalStat(liveCat)
-          if (hist) {
-            score += Math.min(hist.avgGMV / 20000, 5)
-          }
-
-          // 数字人 / 录播 优先级降权
-          if (live.name.includes('数字人') || live.name.includes('录播')) {
-            score -= 20
-          }
+          // 数字人 / 录播 / 低权重直播 大幅降权
+          if (isLowWeightLive(live)) score -= 120
 
           return { live, score }
         })
@@ -974,14 +978,6 @@ export const useScheduleStore = defineStore('schedule', () => {
         return daysBetween(seg.assignedDates[0], liveDate) >= 3
       }
 
-      function getRuleBoost(liveCategory: string, segCategory: string): number {
-        const lc = normalizeCategory(liveCategory)
-        const sc = normalizeCategory(segCategory)
-        return learnedRules.value.filter(
-          (r) => normalizeCategory(r.liveCategory) === lc && normalizeCategory(r.toCategory) === sc
-        ).length
-      }
-
       function getTimeRecencyScore(timeRange: string): number {
         const parts = timeRange.split(/[-~—]/)
         if (parts.length < 2) return 0
@@ -1002,14 +998,20 @@ export const useScheduleStore = defineStore('schedule', () => {
       // caller can push it back into the correct line pool.
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
         if (seg.status !== 'available' && !allowReuse) return null
-        // Hard ceiling: never exceed 2x target exposure, regardless of caller logic
-        const target = getTarget(live)
-        if (live.exposure >= target * 2) return null
-        const hardMax = Math.max(0, target * 2 - live.exposure)
-        const desiredCount = Math.min(seg.count, maxCount ?? seg.count, hardMax)
-        if (desiredCount <= 0) return null
+        const maxSegs = MAX_SEGMENTS_BY_GRADE[live.grade || 'C'] ?? 2
+        if (live.assignedAudiences.length >= maxSegs) return null
 
-        // Avoid excessive splitting: if we'd take less than 30% of the segment, skip it
+        // 低权重直播硬性上限
+        const lowLimit = getLowWeightLimit(live)
+        if (lowLimit) {
+          if (live.assignedAudiences.length >= lowLimit.maxSegments) return null
+          const effectiveMax = Math.min(maxCount ?? seg.count, lowLimit.maxExposure - live.exposure)
+          if (effectiveMax <= 0) return null
+          maxCount = effectiveMax
+        }
+
+        const desiredCount = Math.min(seg.count, maxCount ?? seg.count)
+        if (desiredCount <= 0) return null
         if (desiredCount < seg.count * 0.3) return null
 
         let remaining: AudienceSegment | null = null
@@ -1067,6 +1069,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         const excludedCats = getExcludedCats(live)
         // Use category FAMILY for counting so 太极s/A/BCD count as one "太极"
         const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
+        const assignedNormalizedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
         const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
 
         // Debug: log when category limit is active
@@ -1094,49 +1097,43 @@ export const useScheduleStore = defineStore('schedule', () => {
             console.log(`[pickBest] ${live.name} SKIP ${getCategoryFamily(seg.category)} (family limit reached)`)
             return false
           }
+          // 同一场直播同一细分品类最多只分配一次（避免堆叠）
+          if (assignedNormalizedCats.has(normalizeCategory(seg.category))) return false
           return true
         })
 
         if (eligible.length === 0) return null
 
-        const liveCat = normalizeCategory(live.category)
-        const hist = findHistoricalStat(liveCat)
-
         eligible.sort((a, b) => {
-          // 1. Same category family first (垂类优先)
-          const aSameFamily = isSameCategoryFamily(a.category, live.category)
-          const bSameFamily = isSameCategoryFamily(b.category, live.category)
-          if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
+          // 1. Primary line first (主线优先，中性品类跨线作为 fallback)
+          const aPrimary = a.line === live.line
+          const bPrimary = b.line === live.line
+          if (aPrimary !== bPrimary) return bPrimary ? 1 : -1
 
-          // 2. Learned rules boost
-          const aRuleBoost = getRuleBoost(live.category, a.category)
-          const bRuleBoost = getRuleBoost(live.category, b.category)
-          if (aRuleBoost !== bRuleBoost) return bRuleBoost - aRuleBoost
-
-          // 3. Prefer already-assigned categories (品类集中)
-          const aDupCat = assignedCats.has(getCategoryFamily(a.category))
-          const bDupCat = assignedCats.has(getCategoryFamily(b.category))
-          if (aDupCat !== bDupCat) return aDupCat ? -1 : 1
-
-          // 4. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
-          const aDupRange = assignedRanges.has(a.timeRange)
-          const bDupRange = assignedRanges.has(b.timeRange)
-          if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
-
-          // 5. Time recency: newer cohorts have higher quality users
+          // 2. Time recency: newer cohorts have higher quality users (最高优先级)
           const aRecency = getTimeRecencyScore(a.timeRange)
           const bRecency = getTimeRecencyScore(b.timeRange)
           if (aRecency !== bRecency) return bRecency - aRecency
 
-          // 6. ROI / efficiency
-          if (hist && hist.avgExposure > 0) {
-            const roi = hist.avgGMV / hist.avgExposure
-            return (b.count * roi) - (a.count * roi)
-          } else {
-            const aPref = getCrossPref(a.category, live.category, a.timeRange)
-            const bPref = getCrossPref(b.category, live.category, b.timeRange)
-            return (b.count * (bPref.crossRate || 0) * (bPref.ltv || 0)) - (a.count * (aPref.crossRate || 0) * (aPref.ltv || 0))
-          }
+          // 3. Same category family (垂类优先)
+          const aSameFamily = isSameCategoryFamily(a.category, live.category)
+          const bSameFamily = isSameCategoryFamily(b.category, live.category)
+          if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
+
+          // 4. Prefer already-assigned categories (同品类多个时间段合并)
+          const aDupCat = assignedCats.has(getCategoryFamily(a.category))
+          const bDupCat = assignedCats.has(getCategoryFamily(b.category))
+          if (aDupCat !== bDupCat) return aDupCat ? -1 : 1
+
+          // 5. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
+          const aDupRange = assignedRanges.has(a.timeRange)
+          const bDupRange = assignedRanges.has(b.timeRange)
+          if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
+
+          // 6. Large count first (大数量段优先)
+          if (b.count !== a.count) return b.count - a.count
+
+          return 0
         })
 
         return eligible[0]
@@ -1146,128 +1143,125 @@ export const useScheduleStore = defineStore('schedule', () => {
         return live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
       }
 
-      // Round 1: Target-guaranteed round-robin.
-      // Each live picks segments until it reaches its target.
-      // High-weight lives go first, but we loop until everyone reaches target
-      // or no more valid segments exist, ensuring low-weight lives get their fair share.
+      // Round 1: 按线级分组轮询，确保同线各直播都有机会拿到段
+      const lineGroups: Record<LineType, typeof scored> = {
+        health: [],
+        beauty: [],
+        interest: [],
+      }
+      for (const s of scored) {
+        // 联合直播应同时出现在它所关联的所有线级组中，发挥跨线优势
+        const allowedLines = getLiveAllowedLines(s.live)
+        for (const line of allowedLines) {
+          if (lineGroups[line]) lineGroups[line].push(s)
+        }
+      }
+
       let changed = true
-      while (changed) {
+      let round1Iters = 0
+      while (changed && round1Iters < 200) {
         changed = false
-        for (const { live } of scored) {
-          const target = getTarget(live)
-          if (live.exposure >= target) continue
-          const allowedLines = getLiveAllowedLines(live)
-          for (const line of allowedLines) {
-            const best = pickBest(live, linePools[line])
-            if (best) {
-              const maxCount = Math.max(0, target - live.exposure)
-              const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined)
-              const idx = linePools[line].indexOf(best)
-              // Keep the segment in pool for Round 2 reuse (first assignment)
-              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
-              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
-              if (remaining) {
-                linePools[remaining.line].push(remaining)
+        round1Iters++
+        for (const line of (['health', 'beauty', 'interest'] as LineType[])) {
+          const group = lineGroups[line]
+          for (const { live } of group) {
+            const target = getTarget(live)
+            if (live.exposure >= target) continue
+            const allowedLines = getLiveAllowedLines(live)
+            const primaryLine = live.line as LineType
+            const linesToTry = allowedLines.includes(primaryLine)
+              ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+              : allowedLines
+            for (const tryLine of linesToTry) {
+              const best = pickBest(live, linePools[tryLine])
+              if (best) {
+                const maxCount = Math.max(0, target - live.exposure)
+                const beforeCount = live.assignedAudiences.length
+                const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined)
+                if (live.assignedAudiences.length === beforeCount) {
+                  // tryAssign failed (e.g. too-small split for this live's remaining target).
+                  // Do NOT remove from pool — the segment is still viable for other lives.
+                } else {
+                  const idx = linePools[tryLine].indexOf(best)
+                  if (idx !== -1) linePools[tryLine].splice(idx, 1)
+                  if (remaining) {
+                    linePools[remaining.line].push(remaining)
+                  }
+                  changed = true
+                  break
+                }
               }
-              changed = true
-              break
             }
           }
         }
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
-      // Round 2: Distribute remaining unused AND reusable segments in round-robin.
-      // Each live gets one segment per iteration, so high-weight lives
-      // accumulate more over time but no single live monopolizes the pool.
-      // Ceiling: stop at 2x target to prevent monopoly.
-      // Reuse is now allowed: segments assigned in Round 1 can be re-assigned
-      // to a different live as long as daysBetween >= 3.
+      // Round 2: 严格等级优先，继续分配剩余 unused 段（有 grade-based soft cap）
+      const ROUND2_CAP_MULTIPLIER: Record<string, number> = { S: 2.0, A: 1.8, B: 1.5, C: 1.2 }
       let round2Changed = true
-      while (round2Changed) {
+      let round2Iters = 0
+      while (round2Changed && round2Iters < 200) {
         round2Changed = false
+        round2Iters++
         for (const { live } of scored) {
           const target = getTarget(live)
-          if (live.exposure >= target * 2) continue
+          const cap = target * (ROUND2_CAP_MULTIPLIER[live.grade || 'C'] ?? 1.5)
+          if (live.exposure >= cap) continue
           const allowedLines = getLiveAllowedLines(live)
-          for (const line of allowedLines) {
-            const best = pickBest(live, linePools[line], true)
+          const primaryLine = live.line as LineType
+          const linesToTry = allowedLines.includes(primaryLine)
+            ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+            : allowedLines
+          for (const line of linesToTry) {
+            const best = pickBest(live, linePools[line], false)
             if (best) {
-              const remaining = tryAssign(live, best, undefined, true)
-              const idx = linePools[line].indexOf(best)
-              // Only remove from pool if the segment can no longer be reused
-              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
-              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
-              if (remaining) {
-                linePools[remaining.line].push(remaining)
+              const beforeCount = live.assignedAudiences.length
+              const maxCount = Math.max(0, cap - live.exposure)
+              const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined, false)
+              if (live.assignedAudiences.length === beforeCount) {
+                // tryAssign failed for this live; keep segment in pool for others
+              } else {
+                const idx = linePools[line].indexOf(best)
+                if (idx !== -1) linePools[line].splice(idx, 1)
+                if (remaining) {
+                  linePools[remaining.line].push(remaining)
+                }
+                round2Changed = true
+                break
               }
-              round2Changed = true
-              break
             }
           }
         }
         await new Promise((resolve) => setTimeout(resolve, 0))
       }
 
-      // Round 3: Zero-exposure guarantee fallback.
-      // Any live that still has nothing gets at least one segment (reuse if needed).
+      // Round 3: 零曝光兜底，强制给未分配任何段的直播至少一段
       const zeroExposureLives = scored
         .filter(({ live }) => live.exposure === 0)
         .sort((a, b) => b.score - a.score)
 
       for (const { live } of zeroExposureLives) {
         const allowedLines = getLiveAllowedLines(live)
-        let assigned = false
+        const primaryLine = live.line as LineType
+        const linesToTry = allowedLines.includes(primaryLine)
+          ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+          : allowedLines
 
-        // Try unused segments first
-        for (const line of allowedLines) {
-          const best = pickBest(live, linePools[line])
+        for (const line of linesToTry) {
+          const best = pickBest(live, linePools[line], false)
           if (best) {
-            const remaining = tryAssign(live, best)
-            const idx = linePools[line].indexOf(best)
-            const canStillReuse = best.assignedDates && best.assignedDates.length < 2
-            if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
-            if (remaining) {
-              linePools[remaining.line].push(remaining)
-            }
-            assigned = true
-            break
-          }
-        }
-
-        // Fallback: try reusable segments (already assigned on a different day)
-        if (!assigned) {
-          const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
-          const reusable = audienceSegments.value.filter((seg) => {
-            if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
-            if (daysBetween(seg.assignedDates[0], live.date) < 3) return false
-            const lines = getLiveAllowedLines(live)
-            if (!lines.includes(seg.line)) return false
-            const excludedCats = getExcludedCats(live)
-            if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
-            if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) return false
-            const conflicts = checkConflicts(live, seg)
-            if (conflicts.length > 0) return false
-            return true
-          })
-
-          if (reusable.length > 0) {
-            reusable.sort((a, b) => {
-              const aSameFamily = isSameCategoryFamily(a.category, live.category)
-              const bSameFamily = isSameCategoryFamily(b.category, live.category)
-              if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
-              return b.count - a.count
-            })
-
-            const best = reusable[0]
-            const remaining = tryAssign(live, best, undefined, true)
-            for (const line of ['health', 'beauty', 'interest'] as LineType[]) {
-              const idx = linePools[line].findIndex((s) => s.id === best.id)
-              const canStillReuse = best.assignedDates && best.assignedDates.length < 2
-              if (idx !== -1 && !canStillReuse) linePools[line].splice(idx, 1)
-            }
-            if (remaining) {
-              linePools[remaining.line].push(remaining)
+            const beforeCount = live.assignedAudiences.length
+            const remaining = tryAssign(live, best, undefined, false)
+            if (live.assignedAudiences.length === beforeCount) {
+              // tryAssign failed for this live; keep segment in pool for others
+            } else {
+              const idx = linePools[line].indexOf(best)
+              if (idx !== -1) linePools[line].splice(idx, 1)
+              if (remaining) {
+                linePools[remaining.line].push(remaining)
+              }
+              break
             }
           }
         }

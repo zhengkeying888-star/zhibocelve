@@ -86,6 +86,13 @@ async function handleSubmit() {
       switch (item.key) {
         case 'schedule': {
           const result = parseScheduleWorkbook(buffer, item.file?.name)
+          console.log('[Upload Debug] parseScheduleWorkbook result:', {
+            livesCount: result.lives.length,
+            weekDaysCount: result.weekDays.length,
+            weekDays: result.weekDays.map(d => d.date),
+            audienceSegmentsCount: result.audienceSegments.length,
+            historyRecordsCount: result.historyRecords.length,
+          })
           if (result.lives.length > 0) {
             store.setLiveStreams(result.lives)
             store.setWeekDays(result.weekDays)
