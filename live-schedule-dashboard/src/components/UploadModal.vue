@@ -70,6 +70,9 @@ async function handleSubmit() {
     return
   }
 
+  // Pause cloud sync during upload to prevent stale cloud data from overwriting fresh uploads
+  store.pauseCloudSync()
+
   // Clear old data so stale segments from previous uploads don't linger
   store.setLiveStreams([])
   store.setAudienceSegments([])
@@ -157,6 +160,9 @@ async function handleSubmit() {
   if (!realLivesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))) {
     await store.autoSchedule()
   }
+
+  // Resume cloud sync after upload + autoSchedule are fully done
+  store.resumeCloudSync()
 }
 
 function reset() {

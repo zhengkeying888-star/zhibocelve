@@ -218,9 +218,23 @@ export const useScheduleStore = defineStore('schedule', () => {
     { deep: true }
   )
 
+  let isCloudSyncPaused = false
   let unsubscribeChanges = subscribeToChanges(() => {
+    if (isCloudSyncPaused) {
+      console.log('[Cloud] Sync skipped: upload in progress')
+      return
+    }
     loadFromCloud()
   })
+
+  function pauseCloudSync() {
+    isCloudSyncPaused = true
+    console.log('[Cloud] Sync paused for upload')
+  }
+  function resumeCloudSync() {
+    isCloudSyncPaused = false
+    console.log('[Cloud] Sync resumed')
+  }
 
   // Sync version check BEFORE async cloud load so stale data is cleared immediately
   const savedVersion = localStorage.getItem('schedule_data_version')
@@ -1632,5 +1646,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     resetAllData,
     learnedRules,
     pendingAdjustment,
+    pauseCloudSync,
+    resumeCloudSync,
   }
 })
