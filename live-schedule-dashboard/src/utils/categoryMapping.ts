@@ -51,7 +51,6 @@ export const CATEGORY_TO_LINE: Record<string, LineType> = {
   '私域': 'health',
   '塑形流瑜伽': 'beauty',
   '太极': 'health',
-  '太极': 'health',
   '太极s': 'health',
   '太极S': 'health',
   '太极SA': 'health',

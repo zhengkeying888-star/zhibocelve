@@ -994,22 +994,6 @@ export const useScheduleStore = defineStore('schedule', () => {
         return daysBetween(lastAssigned, liveDate) >= 3
       }
 
-      function getTimeRecencyScore(timeRange: string): number {
-        const parts = timeRange.split(/[-~—]/)
-        if (parts.length < 2) return 0
-        const endPart = parts[parts.length - 1].trim()
-        const match = endPart.match(/(\d{4})[年.]?(\d{1,2})[月.]?(\d{1,2})?/)
-        if (!match) return 0
-        const year = parseInt(match[1], 10)
-        const month = parseInt(match[2], 10) - 1
-        const day = match[3] ? parseInt(match[3], 10) : 1
-        const endDate = new Date(year, month, day)
-        const now = new Date()
-        const diffMs = now.getTime() - endDate.getTime()
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-        return -diffDays // 越新的 cohort 分数越高
-      }
-
       // tryAssign returns the remaining segment if a split occurred, so the
       // caller can push it back into the correct line pool.
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
