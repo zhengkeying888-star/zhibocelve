@@ -122,7 +122,7 @@ export function validateSchedule(
   }
 
   // 7. Target achievement check (warning level) — PRD v2.0 targets
-  const targets: Record<string, number> = { S: 350000, A: 220000, B: 150000, C: 120000 }
+  const targets: Record<string, number> = { S: 600000, A: 500000, B: 350000, C: 250000 }
   for (const live of lives) {
     if (live.slot === 'friend-circle') continue
     const target = live.target ?? targets[live.grade || 'C'] ?? 120000

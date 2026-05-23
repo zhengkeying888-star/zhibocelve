@@ -35,7 +35,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 export const useScheduleStore = defineStore('schedule', () => {
   // Breaking-change data version: bump this whenever autoSchedule logic changes
   // in a way that makes old persisted assignments invalid.
-  const DATA_VERSION = 'v3.4-line-round-robin-and-low-weight-cap'
+  const DATA_VERSION = 'v3.4-joint-cross-line-grade-variants-20260521'
 
   // ========== State ==========
   const liveStreams = ref<LiveStream[]>([])
@@ -830,7 +830,6 @@ export const useScheduleStore = defineStore('schedule', () => {
     const recentWeek = liveStreams.value.filter(
       (l) =>
         l.id !== live.id &&
-        l.type !== 'fake' &&
         l.assignedAudiences.some(
           (a) => normalizeCategory(a.category) === normSegCat && a.timeRange === seg.timeRange
         ) &&
@@ -851,11 +850,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
     }
 
-    // Same category within week (only check real lives; fake placeholders should not count)
+    // Same category within week (all live types)
     const sameWeek = liveStreams.value.filter(
       (l) =>
         l.id !== live.id &&
-        l.type !== 'fake' &&
         l.date === live.date &&
         l.assignedAudiences.some((a) => normalizeCategory(a.category) === normSegCat && a.timeRange === seg.timeRange)
     )
@@ -888,9 +886,8 @@ export const useScheduleStore = defineStore('schedule', () => {
         seg.assignedDates = []
       }
 
-      // Reset all real lives. Fake placeholders (if any) are skipped entirely.
+      // Reset all lives (including fake).
       for (const live of liveStreams.value) {
-        if (live.type === 'fake') continue
         live.assignedAudiences = []
         live.exposure = 0
         live.conflictReasons = []
@@ -920,7 +917,7 @@ export const useScheduleStore = defineStore('schedule', () => {
       // Score and sort lives by weight
       const GRADE_SCORE: Record<string, number> = { S: 100, A: 70, B: 40, C: 20 }
       const scored = liveStreams.value
-        .filter((live) => live.slot !== 'friend-circle' && live.type !== 'fake')
+        .filter((live) => live.slot !== 'friend-circle')
         .map((live) => {
           let score = GRADE_SCORE[live.grade || ''] ?? 10
           if (live.slot === 'evening') score += 50
@@ -974,8 +971,9 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       function isSegmentReusable(seg: AudienceSegment, liveDate: string): boolean {
-        if (!seg.assignedDates || seg.assignedDates.length !== 1) return false
-        return daysBetween(seg.assignedDates[0], liveDate) >= 3
+        if (!seg.assignedDates || seg.assignedDates.length === 0) return false
+        const lastAssigned = seg.assignedDates[seg.assignedDates.length - 1]
+        return daysBetween(lastAssigned, liveDate) >= 3
       }
 
       function getTimeRecencyScore(timeRange: string): number {
@@ -999,9 +997,12 @@ export const useScheduleStore = defineStore('schedule', () => {
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
         if (seg.status !== 'available' && !allowReuse) return null
         const maxSegs = MAX_SEGMENTS_BY_GRADE[live.grade || 'C'] ?? 2
-        if (live.assignedAudiences.length >= maxSegs) return null
+        // 段数限制按 normalizeCategory 计数：同品类的不同 timeRange 不额外占用 slot
+        const assignedNormCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
+        const segNormCat = normalizeCategory(seg.category)
+        if (!assignedNormCats.has(segNormCat) && assignedNormCats.size >= maxSegs) return null
 
-        // 低权重直播硬性上限
+        // 低权重直播硬性上限（低权重仍按实际段数计，防止过度堆叠）
         const lowLimit = getLowWeightLimit(live)
         if (lowLimit) {
           if (live.assignedAudiences.length >= lowLimit.maxSegments) return null
@@ -1065,11 +1066,78 @@ export const useScheduleStore = defineStore('schedule', () => {
         return remaining
       }
 
+      // Merge Sweep: after a segment is assigned, greedily assign other eligible
+      // segments of the same normalized category (different timeRange) to the same live.
+      function tryAssignMergeSweep(
+        live: LiveStream,
+        seedSeg: AudienceSegment,
+        pool: AudienceSegment[],
+        maxCount?: number,
+        allowReuse: boolean = false
+      ): { assigned: AudienceSegment[]; remaining: AudienceSegment[] } {
+        const assigned: AudienceSegment[] = []
+        const remaining: AudienceSegment[] = []
+
+        const seedNorm = normalizeCategory(seedSeg.category)
+
+        // Build current-live constraints (same as pickBest)
+        const excludedCats = getExcludedCats(live)
+        const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
+        const assignedCatRanges = new Set(live.assignedAudiences.map((a) => `${normalizeCategory(a.category)}|${a.timeRange}`))
+
+        const mergeable = pool.filter((seg) => {
+          if (seg.id === seedSeg.id) return false
+          if (normalizeCategory(seg.category) !== seedNorm) return false
+          if (!allowReuse) {
+            if (seg.status !== 'available') return false
+            if (!isSegmentUnused(seg)) return false
+          } else {
+            const usable =
+              (seg.status === 'available' && isSegmentUnused(seg)) ||
+              (seg.status === 'used' && isSegmentReusable(seg, live.date))
+            if (!usable) return false
+          }
+          // MUST re-run all pickBest eligibility checks (conflicts, exclusion, family limit, cat-range dedup)
+          if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
+          if (checkConflicts(live, seg).length > 0) return false
+          if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) return false
+          if (assignedCatRanges.has(`${normalizeCategory(seg.category)}|${seg.timeRange}`)) return false
+          return true
+        })
+
+        mergeable.sort((a, b) => b.count - a.count)
+
+        // 限制同品类合并数量：S/A 级最多额外合并 2 个（同品类共 3 个），B/C 级最多额外合并 1 个（同品类共 2 个）
+        const maxAdditionalByGrade: Record<string, number> = { S: 2, A: 2, B: 1, C: 1 }
+        const maxAdditional = maxAdditionalByGrade[live.grade || 'C'] ?? 1
+        const toMerge = mergeable.slice(0, maxAdditional)
+
+        for (const seg of toMerge) {
+          const beforeLen = live.assignedAudiences.length
+          const segRemaining = tryAssign(
+            live,
+            seg,
+            maxCount !== undefined ? Math.max(0, maxCount - live.exposure) : undefined,
+            allowReuse
+          )
+          if (segRemaining) {
+            remaining.push(segRemaining)
+          }
+          if (live.assignedAudiences.length > beforeLen) {
+            assigned.push(seg)
+            const idx = pool.indexOf(seg)
+            if (idx !== -1) pool.splice(idx, 1)
+          }
+        }
+
+        return { assigned, remaining }
+      }
+
       function pickBest(live: LiveStream, pool: AudienceSegment[], allowReuse: boolean = false): AudienceSegment | null {
         const excludedCats = getExcludedCats(live)
         // Use category FAMILY for counting so 太极s/A/BCD count as one "太极"
         const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
-        const assignedNormalizedCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
+        const assignedCatRanges = new Set(live.assignedAudiences.map((a) => `${normalizeCategory(a.category)}|${a.timeRange}`))
         const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
 
         // Debug: log when category limit is active
@@ -1097,8 +1165,9 @@ export const useScheduleStore = defineStore('schedule', () => {
             console.log(`[pickBest] ${live.name} SKIP ${getCategoryFamily(seg.category)} (family limit reached)`)
             return false
           }
-          // 同一场直播同一细分品类最多只分配一次（避免堆叠）
-          if (assignedNormalizedCats.has(normalizeCategory(seg.category))) return false
+          // 同一场直播同一 (品类, 时间段) 最多只分配一次（避免堆叠）
+          // 允许同一品类的不同时间段合并分配
+          if (assignedCatRanges.has(`${normalizeCategory(seg.category)}|${seg.timeRange}`)) return false
           return true
         })
 
@@ -1110,27 +1179,22 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bPrimary = b.line === live.line
           if (aPrimary !== bPrimary) return bPrimary ? 1 : -1
 
-          // 2. Time recency: newer cohorts have higher quality users (最高优先级)
-          const aRecency = getTimeRecencyScore(a.timeRange)
-          const bRecency = getTimeRecencyScore(b.timeRange)
-          if (aRecency !== bRecency) return bRecency - aRecency
-
-          // 3. Same category family (垂类优先)
+          // 2. Same category family (垂类优先)
           const aSameFamily = isSameCategoryFamily(a.category, live.category)
           const bSameFamily = isSameCategoryFamily(b.category, live.category)
           if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
 
-          // 4. Prefer already-assigned categories (同品类多个时间段合并)
+          // 3. Deduplicate assigned categories (强制分散)
           const aDupCat = assignedCats.has(getCategoryFamily(a.category))
           const bDupCat = assignedCats.has(getCategoryFamily(b.category))
-          if (aDupCat !== bDupCat) return aDupCat ? -1 : 1
+          if (aDupCat !== bDupCat) return aDupCat ? 1 : -1
 
-          // 5. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
+          // 4. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
           const aDupRange = assignedRanges.has(a.timeRange)
           const bDupRange = assignedRanges.has(b.timeRange)
           if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
 
-          // 6. Large count first (大数量段优先)
+          // 5. Large count first (大数量段优先)
           if (b.count !== a.count) return b.count - a.count
 
           return 0
@@ -1169,9 +1233,12 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (live.exposure >= target) continue
             const allowedLines = getLiveAllowedLines(live)
             const primaryLine = live.line as LineType
-            const linesToTry = allowedLines.includes(primaryLine)
-              ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
-              : allowedLines
+            // 联合直播在当前 group 遍历时优先尝试当前 line，确保跨线分配
+            const linesToTry = live.isJoint && allowedLines.includes(line)
+              ? [line, ...allowedLines.filter((l) => l !== line)]
+              : allowedLines.includes(primaryLine)
+                ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+                : allowedLines
             for (const tryLine of linesToTry) {
               const best = pickBest(live, linePools[tryLine])
               if (best) {
@@ -1186,6 +1253,17 @@ export const useScheduleStore = defineStore('schedule', () => {
                   if (idx !== -1) linePools[tryLine].splice(idx, 1)
                   if (remaining) {
                     linePools[remaining.line].push(remaining)
+                  }
+                  // Merge sweep: assign other eligible timeRanges of the same category
+                  const mergeResult = tryAssignMergeSweep(
+                    live,
+                    best,
+                    linePools[tryLine],
+                    maxCount > 0 ? maxCount : undefined,
+                    false
+                  )
+                  for (const r of mergeResult.remaining) {
+                    linePools[r.line].push(r)
                   }
                   changed = true
                   break
@@ -1227,6 +1305,17 @@ export const useScheduleStore = defineStore('schedule', () => {
                 if (remaining) {
                   linePools[remaining.line].push(remaining)
                 }
+                // Merge sweep: assign other eligible timeRanges of the same category
+                const mergeResult = tryAssignMergeSweep(
+                  live,
+                  best,
+                  linePools[line],
+                  maxCount > 0 ? maxCount : undefined,
+                  false
+                )
+                for (const r of mergeResult.remaining) {
+                  linePools[r.line].push(r)
+                }
                 round2Changed = true
                 break
               }
@@ -1260,6 +1349,17 @@ export const useScheduleStore = defineStore('schedule', () => {
               if (idx !== -1) linePools[line].splice(idx, 1)
               if (remaining) {
                 linePools[remaining.line].push(remaining)
+              }
+              // Merge sweep: assign other eligible timeRanges of the same category
+              const mergeResult = tryAssignMergeSweep(
+                live,
+                best,
+                linePools[line],
+                undefined,
+                false
+              )
+              for (const r of mergeResult.remaining) {
+                linePools[r.line].push(r)
               }
               break
             }
