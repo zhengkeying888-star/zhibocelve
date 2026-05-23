@@ -146,6 +146,9 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '懒人吃瘦（女版）': 'A',
   '相机摄影-助教罐头': 'A',
   '短视频李扬': 'S',
+  '君合太极': 'S',
+  '气血调理晨练': 'A',
+  '短视频复用': 'S',
 }
 
 export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
