@@ -79,7 +79,7 @@ export const DEFAULT_CATEGORY_GRADES: Record<string, GradeType> = {
   '东方养正瑜伽': 'B',
   '短视频': 'S',
   '儿童健康': 'B',
-  '风光摄影': 'B',
+  '风光摄影': 'S',
   '钩针编织美学': 'B',
   '古法居家养生': 'B',
   '居家古法养生': 'S',

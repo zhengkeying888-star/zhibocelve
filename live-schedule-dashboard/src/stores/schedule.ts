@@ -635,6 +635,12 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   function applyCategoryGrades() {
     for (const live of liveStreams.value) {
+      // 1. 直播名硬映射优先级最高（用户明确指定的名师/IP 等级）
+      const inferred = inferGrade(live.name)
+      if (inferred) {
+        live.grade = inferred
+      }
+
       // Joint live: compute grades/lines/target from all sub-categories
       if (live.isJoint && live.categories) {
         const grades: string[] = []
@@ -647,7 +653,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (line) lines.push(line)
         }
         if (grades.length > 0) {
-          live.grade = grades[0] as GradeType
+          // 若直播名无硬映射，则使用子品类等级
+          if (!inferred) live.grade = grades[0] as GradeType
           // Joint live target: primary live gets full target, subsequent lives get half
           live.target = grades.reduce((sum, g, idx) => sum + (TARGET_EXPOSURE[g] || 120000) * (idx === 0 ? 1 : 0.5), 0)
         }
@@ -659,13 +666,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       const canonical = normalizeCategory(live.category)
-      const grade = categoryGrades.value[canonical]
-      if (grade) {
-        live.grade = grade
-      } else {
-        // Fallback: infer grade from live name (famous host / IP detection)
-        const inferred = inferGrade(live.name)
-        if (inferred) live.grade = inferred
+      if (!inferred) {
+        // Fallback: 品类级别映射
+        const grade = categoryGrades.value[canonical]
+        if (grade) live.grade = grade
       }
       const line = categoryLines.value[canonical]
       if (line) live.line = line
