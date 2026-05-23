@@ -184,10 +184,10 @@ historical_gmv_bonus: Math.min(avgGMV / 20_000, 5)   // 封顶 +5
 
 | 评级 | 目标曝光 |
 |---|---|
-| S | 350,000 |
-| A | 220,000 |
-| B | 150,000 |
-| C | 120,000 |
+| S | 600,000 |
+| A | 500,000 |
+| B | 350,000 |
+| C | 250,000 |
 
 联合直播目标 = 第一场完整目标 + 后续子直播目标 × 0.5
 
@@ -310,7 +310,7 @@ npm run preview  # 预览构建产物
 
 ## 版本与数据兼容性
 
-- **DATA_VERSION**: `v3.3-reuse-and-family-conflicts`
+- **DATA_VERSION**: `v3.4-line-round-robin-and-low-weight-cap`
 - 每次 autoSchedule 逻辑发生不兼容变更时必须 bump DATA_VERSION，强制清空旧 persisted state
 - 版本不匹配时自动调用 `resetAllData()` 并 reload 页面
 
@@ -318,7 +318,9 @@ npm run preview  # 预览构建产物
 
 - 不要mock数据库，所有测试都基于真实Excel解析逻辑
 - 品类名必须走 `normalizeCategory` 规范化后再做匹配，否则归因会全是0
-- **频控/排除/去重中的品类比较必须用 `isSameCategoryFamily`，绝对不能用 `===`**。`===` 会导致别名族（`声乐`/`国际声乐`）和等级变体（`瑜伽S`/`瑜伽`）的频控漏控
+- **3 天频控使用 `normalizeCategory` 精确品类名**：同 family 的不同等级段（如 `太极BCD` / `太极SA` / `太极A`）允许在 3 天内分别触达
+- **排除/去重/5-family limit 使用 `isSameCategoryFamily`**：这些场景不允许同 family 的别名族或等级变体重复
+- **绝对不能在排除/去重场景用 `===` 比较品类名**
 - **复用和转移是完全不同的概念**：`tryAssign` 的 transfer 逻辑（从原直播移除）在复用场景下是毁灭性 bug
 - 修改品类映射后需要重新上传数据或点击「应用到所有场次」+「重新生成排期」
 - 构建输出在 `dist/` 目录，可部署到任何静态托管服务

@@ -33,7 +33,7 @@ async function getTenantAccessToken(appId, appSecret) {
 }
 
 async function createBitable(token, folderToken, name) {
-  const res = await fetch(`${FEISHU_API_BASE}/drive/v1/files`, {
+  const res = await fetch(`${FEISHU_API_BASE}/bitable/v1/apps`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -41,7 +41,6 @@ async function createBitable(token, folderToken, name) {
     },
     body: JSON.stringify({
       name,
-      type: 'bitable',
       folder_token: folderToken || undefined,
     }),
   });
@@ -50,34 +49,40 @@ async function createBitable(token, folderToken, name) {
     throw new Error(`Create bitable failed: ${data.msg}`);
   }
   return {
-    appToken: data.data?.token,
-    url: data.data?.url,
+    appToken: data.data?.app?.app_token,
+    tableId: data.data?.app?.default_table_id,
+    url: data.data?.app?.url,
   };
 }
 
-async function addFields(token, appToken, tableId, fields) {
-  const requests = fields.map((f) => ({
-    field_name: f.name,
-    type: f.type,
-    property: f.property || undefined,
-  }));
-
+async function addField(token, appToken, tableId, field) {
   const res = await fetch(
-    `${FEISHU_API_BASE}/bitable/v1/apps/${appToken}/tables/${tableId}/fields/batch_create`,
+    `${FEISHU_API_BASE}/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ requests }),
+      body: JSON.stringify({
+        field_name: field.name,
+        type: field.type,
+        property: field.property || undefined,
+      }),
     }
   );
   const data = await res.json();
   if (data.code !== 0) {
-    throw new Error(`Add fields failed: ${data.msg}`);
+    throw new Error(`Add field "${field.name}" failed: ${data.msg}`);
   }
   return data.data;
+}
+
+async function addFields(token, appToken, tableId, fields) {
+  for (const field of fields) {
+    await addField(token, appToken, tableId, field);
+    console.log(`  Added field: ${field.name}`);
+  }
 }
 
 async function batchCreateRecords(token, appToken, tableId, records) {
@@ -108,15 +113,8 @@ async function main() {
   // Create bitable
   const weekTitle = '排期5.18-5.24';
   console.log(`Creating bitable: ${weekTitle}...`);
-  const { appToken, url } = await createBitable(token, config.folderToken, weekTitle);
+  const { appToken, tableId, url } = await createBitable(token, config.folderToken, weekTitle);
   console.log(`Created: ${url}`);
-
-  // The first table is created automatically, get its ID
-  const tablesRes = await fetch(`${FEISHU_API_BASE}/bitable/v1/apps/${appToken}/tables`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const tablesData = await tablesRes.json();
-  const tableId = tablesData.data?.items?.[0]?.table_id;
   console.log(`Table ID: ${tableId}`);
 
   // Load converted data
@@ -124,21 +122,29 @@ async function main() {
   const rows = JSON.parse(fs.readFileSync(rowsPath, 'utf-8'));
   console.log(`Loaded ${rows.length} rows`);
 
+  // Convert date strings to timestamps for Feishu Date fields
+  for (const row of rows) {
+    if (row.date) {
+      row.date = new Date(row.date).getTime();
+    }
+  }
+
   // Add fields
   console.log('Adding fields...');
   await addFields(token, appToken, tableId, [
     { name: 'date', type: 5 }, // Date
     { name: 'weekday', type: 1 }, // Text
     { name: 'slot', type: 3, property: { options: [{ name: '晨练' }, { name: '晚间' }, { name: '伪直播-早' }, { name: '伪直播-晚' }, { name: '朋友圈' }] } },
-    { name: 'rowType', type: 3, property: { options: [{ name: '直播名' }, { name: '文案负责人' }, { name: '曝光量级' }, { name: 'audience' }] } },
     { name: 'liveName', type: 1 },
+    { name: 'category', type: 1 },
+    { name: 'line', type: 3, property: { options: [{ name: '健康线' }, { name: '变美线' }, { name: '兴趣线' }] } },
     { name: 'owner', type: 1 },
     { name: 'exposure', type: 2 }, // Number
-    { name: 'audienceCategory', type: 1 },
-    { name: 'audienceTimeRange', type: 1 },
-    { name: 'audienceCount', type: 2 },
-    { name: 'audienceLine', type: 3, property: { options: [{ name: '健康线' }, { name: '变美线' }, { name: '兴趣线' }] } },
-    { name: 'isStock', type: 7 }, // Checkbox
+    { name: 'healthAudience', type: 1 },
+    { name: 'beautyAudience', type: 1 },
+    { name: 'interestAudience', type: 1 },
+    { name: 'isJoint', type: 7 }, // Checkbox
+    { name: 'isCrossCategory', type: 7 }, // Checkbox
   ]);
 
   // Batch create records (max 500 per call)

@@ -1,0 +1,16 @@
+[
+  {"date":"2026-05-26","weekday":"周二","slot":"晨练","liveName":"逆龄女神瑜伽晨练+五禽戏晨练","category":"逆龄女神瑜伽","line":"变美线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":true,"isCrossCategory":true},
+  {"date":"2026-05-26","weekday":"周二","slot":"晚间","liveName":"【数字人】开心太极","category":"太极","line":"健康线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-27","weekday":"周三","slot":"晨练","liveName":"君合太极晨练","category":"君合太极","line":"健康线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":true},
+  {"date":"2026-05-27","weekday":"周三","slot":"晚间","liveName":"风光摄影耿春晖","category":"相机摄影","line":"兴趣线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-28","weekday":"周四","slot":"晨练","liveName":"普拉提晨练+一杰瑜伽晨练","category":"普拉提","line":"变美线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":true,"isCrossCategory":false},
+  {"date":"2026-05-28","weekday":"周四","slot":"晚间","liveName":"摄影美学","category":"摄影美学","line":"兴趣线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-28","weekday":"周四","slot":"晚间","liveName":"【数字人】体态塑形瑜伽","category":"体态塑形瑜伽","line":"变美线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-28","weekday":"周四","slot":"伪直播-晚","liveName":"【伪直播】唱歌张婷婷","category":"唱歌","line":"兴趣线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-29","weekday":"周五","slot":"晨练","liveName":"睡眠调理晨练","category":"睡眠调理","line":"健康线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-29","weekday":"周五","slot":"晚间","liveName":"健康营养","category":"健康营养","line":"健康线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-29","weekday":"周五","slot":"伪直播-晚","liveName":"【伪直播】居家古法","category":"居家古法养生","line":"健康线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-29","weekday":"周五","slot":"伪直播-晚","liveName":"【伪直播】国际声乐","category":"国际声乐","line":"兴趣线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-30","weekday":"周六","slot":"伪直播-早","liveName":"【伪直播】一杰瑜伽晨练","category":"一杰瑜伽","line":"变美线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false},
+  {"date":"2026-05-30","weekday":"周六","slot":"伪直播-晚","liveName":"【伪直播】懒人吃瘦","category":"懒人吃瘦","line":"变美线","owner":"","exposure":0,"healthAudience":"","beautyAudience":"","interestAudience":"","isJoint":false,"isCrossCategory":false}
+]
