@@ -1,0 +1,7 @@
+{
+  "name": "zhibocelve-root",
+  "scripts": {
+    "build": "cd live-schedule-dashboard && npm install && npm run build",
+    "vercel-build": "cd live-schedule-dashboard && npm install && npm run build"
+  }
+}
