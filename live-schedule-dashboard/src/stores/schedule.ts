@@ -81,7 +81,7 @@ export const useScheduleStore = defineStore('schedule', () => {
   const gmvMultiplier = ref(18)
 
   // PRD v2.0: neutral categories that can cross beauty → health
-  const NEUTRAL_CATEGORIES = new Set(['一杰瑜伽', '东方养正瑜伽'])
+  const NEUTRAL_CATEGORIES = new Set(['东方养正瑜伽'])
 
   // Adjusted target exposure based on actual human scheduling behavior.
   // Human schedules do not stop at fixed targets; famous hosts get as many
@@ -219,9 +219,15 @@ export const useScheduleStore = defineStore('schedule', () => {
   )
 
   let isCloudSyncPaused = false
+  let skipNextCloudSync = false
   let unsubscribeChanges = subscribeToChanges(() => {
     if (isCloudSyncPaused) {
       console.log('[Cloud] Sync skipped: upload in progress')
+      return
+    }
+    if (skipNextCloudSync) {
+      skipNextCloudSync = false
+      console.log('[Cloud] Sync skipped: grace period after resume')
       return
     }
     loadFromCloud()
@@ -233,7 +239,8 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
   function resumeCloudSync() {
     isCloudSyncPaused = false
-    console.log('[Cloud] Sync resumed')
+    skipNextCloudSync = true
+    console.log('[Cloud] Sync resumed, skipping next load')
   }
 
   // Sync version check BEFORE async cloud load so stale data is cleared immediately
@@ -999,10 +1006,14 @@ export const useScheduleStore = defineStore('schedule', () => {
       function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
         if (seg.status !== 'available' && !allowReuse) return null
         const maxSegs = MAX_SEGMENTS_BY_GRADE[live.grade || 'C'] ?? 2
-        // 段数限制按 normalizeCategory 计数：同品类的不同 timeRange 不额外占用 slot
-        const assignedNormCats = new Set(live.assignedAudiences.map((a) => normalizeCategory(a.category)))
-        const segNormCat = normalizeCategory(seg.category)
-        if (!assignedNormCats.has(segNormCat) && assignedNormCats.size >= maxSegs) return null
+        // 段数限制按品类族计数：同族（含等级变体）不额外占用 slot
+        const assignedFamilies = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
+        const segFamily = getCategoryFamily(seg.category)
+        if (!assignedFamilies.has(segFamily) && assignedFamilies.size >= maxSegs) return null
+
+        // 单场直播总段数上限（按等级），防止单场段数过多影响发送速度
+        const MAX_TOTAL_SEGMENTS: Record<string, number> = { S: 10, A: 8, B: 7, C: 5 }
+        if (live.assignedAudiences.length >= MAX_TOTAL_SEGMENTS[live.grade || 'C']) return null
 
         // 低权重直播硬性上限（低权重仍按实际段数计，防止过度堆叠）
         const lowLimit = getLowWeightLimit(live)
@@ -1080,8 +1091,6 @@ export const useScheduleStore = defineStore('schedule', () => {
         const assigned: AudienceSegment[] = []
         const remaining: AudienceSegment[] = []
 
-        const seedNorm = normalizeCategory(seedSeg.category)
-
         // Build current-live constraints (same as pickBest)
         const excludedCats = getExcludedCats(live)
         const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
@@ -1089,7 +1098,7 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         const mergeable = pool.filter((seg) => {
           if (seg.id === seedSeg.id) return false
-          if (normalizeCategory(seg.category) !== seedNorm) return false
+          if (!isSameCategoryFamily(seg.category, seedSeg.category)) return false
           if (!allowReuse) {
             if (seg.status !== 'available') return false
             if (!isSegmentUnused(seg)) return false
@@ -1102,16 +1111,19 @@ export const useScheduleStore = defineStore('schedule', () => {
           // MUST re-run all pickBest eligibility checks (conflicts, exclusion, family limit, cat-range dedup)
           if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
           if (checkConflicts(live, seg).length > 0) return false
-          if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) return false
+          const maxFamilies = live.grade === 'S' ? 5 : live.grade === 'A' ? 4 : 3
+          if (assignedCats.size >= maxFamilies && !assignedCats.has(getCategoryFamily(seg.category))) return false
           if (assignedCatRanges.has(`${normalizeCategory(seg.category)}|${seg.timeRange}`)) return false
           return true
         })
 
         mergeable.sort((a, b) => b.count - a.count)
 
-        // 限制同品类合并数量：S/A 级最多额外合并 2 个（同品类共 3 个），B/C 级最多额外合并 1 个（同品类共 2 个）
-        const maxAdditionalByGrade: Record<string, number> = { S: 2, A: 2, B: 1, C: 1 }
-        const maxAdditional = maxAdditionalByGrade[live.grade || 'C'] ?? 1
+        // 限制同品类合并数量：S/A/B 级最多额外合并 1 个（同品类共 2 个），C 级不合并
+        // 当直播已分配段数 >= 5 时，不再触发合并扫荡，防止单场段数过多
+        const maxAdditionalByGrade: Record<string, number> = { S: 1, A: 1, B: 1, C: 0 }
+        let maxAdditional = maxAdditionalByGrade[live.grade || 'C'] ?? 1
+        if (live.assignedAudiences.length >= 5) maxAdditional = 0
         const toMerge = mergeable.slice(0, maxAdditional)
 
         for (const seg of toMerge) {
@@ -1142,8 +1154,9 @@ export const useScheduleStore = defineStore('schedule', () => {
         const assignedCatRanges = new Set(live.assignedAudiences.map((a) => `${normalizeCategory(a.category)}|${a.timeRange}`))
         const assignedRanges = new Set(live.assignedAudiences.map((a) => a.timeRange))
 
+        const maxFamilies = live.grade === 'S' ? 5 : live.grade === 'A' ? 4 : 3
         // Debug: log when category limit is active
-        if (assignedCats.size >= 5) {
+        if (assignedCats.size >= maxFamilies) {
           console.log(`[pickBest] ${live.name} has ${assignedCats.size} cat families, limiting to existing:`, Array.from(assignedCats))
         }
 
@@ -1162,8 +1175,8 @@ export const useScheduleStore = defineStore('schedule', () => {
           if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, normalizeCategory(seg.category)))) return false
           const conflicts = checkConflicts(live, seg)
           if (conflicts.length > 0) return false
-          // Soft max 5 categories per live: once 5 families are assigned, only pick from existing ones
-          if (assignedCats.size >= 5 && !assignedCats.has(getCategoryFamily(seg.category))) {
+          // 品类族上限：S 5 个、A 4 个、B/C 3 个
+          if (assignedCats.size >= maxFamilies && !assignedCats.has(getCategoryFamily(seg.category))) {
             console.log(`[pickBest] ${live.name} SKIP ${getCategoryFamily(seg.category)} (family limit reached)`)
             return false
           }
@@ -1206,7 +1219,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       function getTarget(live: LiveStream): number {
-        return live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+        const base = live.target ?? TARGET_EXPOSURE[live.grade || 'C'] ?? 120000
+        // 晨练目标按 75% 计算，避免晨练占用过多段、晚间 S 级拿不到大段
+        if (live.slot === 'morning') return Math.floor(base * 0.75)
+        return base
       }
 
       // Round 1: 按线级分组轮询，确保同线各直播都有机会拿到段

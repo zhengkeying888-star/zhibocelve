@@ -172,7 +172,7 @@ export function normalizeCategory(name: string): string {
   if (CATEGORY_ALIASES[s]) return CATEGORY_ALIASES[s]
 
   // 3. Extract prefix before separator (e.g. "睡眠调理-五禽戏" → "睡眠调理")
-  const separators = ['-', '—', '–', '|', '·', '•', 'x', 'X', '×', '、']
+  const separators = ['-', '—', '–', '|', '·', '•', 'x', 'X', '×', '、', '+']
   for (const sep of separators) {
     const idx = s.indexOf(sep)
     if (idx > 0) {

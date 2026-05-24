@@ -142,6 +142,7 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '摄影美学': 'S',
   // 用户 2026-05-17 明确指定（不准改动）
   '一杰瑜伽晨练+五禽戏': 'A',
+  '普拉提晨练+一杰瑜伽晨练': 'A',
   '逆龄女神瑜伽': 'A',
   '懒人吃瘦（女版）': 'A',
   '相机摄影-助教罐头': 'A',
@@ -149,14 +150,16 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '君合太极': 'S',
   '气血调理晨练': 'A',
   '短视频复用': 'S',
+  '一杰瑜伽': 'S',
 }
 
 export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
   const direct = LIVE_NAME_TO_GRADE[name.trim()]
   if (direct) return direct
 
-  // 子串匹配：直播名包含已知名师人名
-  for (const [key, grade] of Object.entries(LIVE_NAME_TO_GRADE)) {
+  // 子串匹配：直播名包含已知名师人名（优先匹配更长的 key，避免短 key 覆盖）
+  const entries = Object.entries(LIVE_NAME_TO_GRADE).sort((a, b) => b[0].length - a[0].length)
+  for (const [key, grade] of entries) {
     if (name.includes(key)) return grade
   }
 
@@ -181,6 +184,8 @@ function inferCategory(name: string): string {
     '田珂': '懒人吃瘦',
     '唐一杰': '一杰瑜伽',
     '2026.4.2唐一杰': '一杰瑜伽',
+    '一杰瑜伽': '一杰瑜伽',
+    '东方养正瑜伽': '东方养正瑜伽',
   }
   const directMap = LIVE_NAME_TO_CATEGORY[name.trim()]
   if (directMap) return directMap
@@ -433,7 +438,11 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         continue
       }
     }
-    liveNames.push(line)
+    if (line.includes('+')) {
+      liveNames.push(...line.split('+').map(p => p.trim()).filter(Boolean))
+    } else {
+      liveNames.push(line)
+    }
   }
 
   // 同单元格多行 = 一场联合直播（PRD v2.0，原为早间专享，现扩展至全时段）
@@ -1440,10 +1449,10 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
         currentTimeRange = al
         continue
       }
-      const match = al.match(/(.+?)[（(](\d+)[）)]/)
+      const match = al.match(/(.+?)[（(]([\d,.]+)[）)]/)
       if (match && currentTimeRange) {
         const category = normalizeCategory(match[1].trim())
-        const count = parseInt(match[2], 10)
+        const count = parseInt(match[2].replace(/,/g, ''), 10)
 
         let targetLive
         if (isFakeHistory) {
@@ -1622,7 +1631,7 @@ function parseHistoryJson(json: any[][], sheetName: string, fileName?: string): 
           currentTimeRange = al
           continue
         }
-        const match = al.match(/(.+?)[（(](\d+)[）)]/)
+        const match = al.match(/(.+?)[（(]([\d,.]+)[）)]/)
         if (match && currentTimeRange) {
           records.push({
             date: day.date,
