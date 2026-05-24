@@ -14,9 +14,9 @@
 
 ## 当前系统版本
 
-- **DATA_VERSION**: `v3.3-reuse-and-family-conflicts`
-- **PRD 版本**: v3.3
-- **生效日期**: 2026-05-15
+- **DATA_VERSION**: `v3.4-line-round-robin-and-segment-cap`
+- **PRD 版本**: v3.4
+- **生效日期**: 2026-05-24
 
 ## 关键数据流
 
@@ -45,16 +45,18 @@ audience 量级表 Excel → parseAudienceJson → AudienceSegment[]
 | 2026-05-13 | v3.1 数字解析修复 | 支持货币符号/逗号，扩充排期规则 |
 | 2026-05-14 | v3.2 全跨科 + 防垄断 | `isCrossCategory: true`、5-family limit、2x ceiling、split 保护 |
 | 2026-05-15 | v3.3 复用 + 频控修正 | `isSameCategoryFamily` 替代 `===`、Round 2 真正复用、映射补全 |
+| 2026-05-24 | v3.4 segment-cap + morning-discount + 一杰瑜伽修正 | `MAX_TOTAL_SEGMENTS` 硬上限、晨练 target ×0.75、品类族上限等级相关、一杰瑜伽精确映射 beauty、cloud sync race 修复、parser 逗号/+分隔符修复 |
 
 ## 核心指标
 
 - **目标总曝光**: 487w（audience 总库存）
 - **周 GMV 目标区间**: 20-25w（动态缩放强制收敛）
-- **单场目标曝光**: S=350k, A=220k, B=150k, C=120k
+- **单场目标曝光**: S=600k, A=500k, B=350k, C=250k（晨练 ×0.75）
+- **单场总段数上限**: S=10, A=8, B=7, C=5
 - **频控**: 3天间隔、一周内最多2次、当日去重
 
 ## 关联文件
 
-- 最新 PRD: `docs/PRD_直播排期规则_v3.3.md`
+- 最新 PRD: `docs/PRD_直播排期规则_v3.4.md`
 - 项目复盘: `docs/bugs/2026-05-15-category-mapping-reuse-retrospective.md`
-- 全局记忆: `~/.claude/memory-log/2026-05-15-category-mapping-rule-understanding.md`
+- 全局记忆: `~/.claude/memory-log/2026-05-17-live-schedule-dashboard-v3-4-system-and-rules.md`
