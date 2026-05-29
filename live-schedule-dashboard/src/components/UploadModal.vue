@@ -137,9 +137,14 @@ async function handleSubmit() {
         store.updateUploadStatus(item.key as UploadKey, true)
       }
       item.status = 'done'
-    } catch (err) {
+    } catch (err: any) {
       console.error('Parse error:', err)
       item.status = 'error'
+      alert(`【${item.label}】解析失败：${err?.message || String(err)}`)
+      // 中断上传流程，避免在错误状态下继续 autoSchedule
+      overallStatus.value = 'idle'
+      store.resumeCloudSync()
+      return
     }
   }
 
