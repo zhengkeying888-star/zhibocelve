@@ -1248,7 +1248,9 @@ export const useScheduleStore = defineStore('schedule', () => {
           const group = lineGroups[line]
           for (const { live } of group) {
             const target = getTarget(live)
-            if (live.exposure >= target) continue
+            // 联合直播即使达到总目标，也应继续参与其他线级组轮询，
+            // 确保所有 involved line 都实际分配到 audience（如 beauty+health 联合直播）
+            if (live.exposure >= target && !live.isJoint) continue
             const allowedLines = getLiveAllowedLines(live)
             const primaryLine = live.line as LineType
             // 联合直播始终以主品类线级（live.line）为第一优先，
