@@ -154,6 +154,7 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
 }
 
 export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
+  if (!name || typeof name !== 'string') return null
   const direct = LIVE_NAME_TO_GRADE[name.trim()]
   if (direct) return direct
 
@@ -176,6 +177,7 @@ export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
 }
 
 function inferCategory(name: string): string {
+  if (!name || typeof name !== 'string') return ''
   // 直播名硬映射（无品类前缀时的兜底推断）
   const LIVE_NAME_TO_CATEGORY: Record<string, string> = {
     '唱歌李燃': '国际声乐',
@@ -511,7 +513,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
           nameIdx = j
         }
       }
-      const name = nameIdx >= 0 ? lines[nameIdx] : lines[startIdx]
+      const name = (nameIdx >= 0 ? lines[nameIdx] : lines[startIdx]) || ''
       const timeMatch = lines[ti].match(timeRangeRegex)
       const startTime = timeMatch ? timeMatch[1].replace('：', ':') : '07:30'
       const endTime = timeMatch ? timeMatch[2].replace('：', ':') : '09:00'
@@ -568,7 +570,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   }
 
   // Single live
-  let name = liveNames[0] || lines[0]
+  let name = liveNames[0] || lines[0] || ''
   // If first name is unrecognizable but a later name is, prefer the recognizable one
   if (liveNames.length > 1 && inferCategory(name) === name) {
     for (let i = 1; i < liveNames.length; i++) {
