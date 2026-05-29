@@ -868,10 +868,10 @@ export const useScheduleStore = defineStore('schedule', () => {
     // those historical crowds cannot be re-assigned to this live.
     if (live.fakeHistoryAudiences && live.fakeHistoryAudiences.length > 0) {
       const matched = live.fakeHistoryAudiences.find(
-        (h) => normalizeCategory(h.category) === normSegCat && h.timeRange === seg.timeRange
+        (h) => normalizeCategory(h.category) === normSegCat
       )
       if (matched) {
-        reasons.push(`${seg.category} ${seg.timeRange} 为该直播历史复用人群，30天内不可再次复用`)
+        reasons.push(`${seg.category} 为该直播历史复用人群，30天内不可再次复用`)
       }
     }
 
@@ -1262,7 +1262,7 @@ export const useScheduleStore = defineStore('schedule', () => {
               if (best) {
                 const maxCount = Math.max(0, target - live.exposure)
                 const beforeCount = live.assignedAudiences.length
-                const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined)
+                const remaining = tryAssign(live, best, maxCount)
                 if (live.assignedAudiences.length === beforeCount) {
                   // tryAssign failed (e.g. too-small split for this live's remaining target).
                   // Do NOT remove from pool — the segment is still viable for other lives.
@@ -1277,7 +1277,7 @@ export const useScheduleStore = defineStore('schedule', () => {
                     live,
                     best,
                     linePools[tryLine],
-                    maxCount > 0 ? maxCount : undefined,
+                    maxCount,
                     false
                   )
                   for (const r of mergeResult.remaining) {
@@ -1314,7 +1314,7 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (best) {
               const beforeCount = live.assignedAudiences.length
               const maxCount = Math.max(0, cap - live.exposure)
-              const remaining = tryAssign(live, best, maxCount > 0 ? maxCount : undefined, false)
+              const remaining = tryAssign(live, best, maxCount, false)
               if (live.assignedAudiences.length === beforeCount) {
                 // tryAssign failed for this live; keep segment in pool for others
               } else {
@@ -1328,7 +1328,7 @@ export const useScheduleStore = defineStore('schedule', () => {
                   live,
                   best,
                   linePools[line],
-                  maxCount > 0 ? maxCount : undefined,
+                  maxCount,
                   false
                 )
                 for (const r of mergeResult.remaining) {

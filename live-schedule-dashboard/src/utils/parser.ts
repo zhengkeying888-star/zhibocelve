@@ -405,27 +405,56 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
 
   const timeRangeRegex = /(\d{1,2}[：:]\d{2})\s*[-~－]\s*(\d{1,2}[：:]\d{2})/
   const timeIndices: number[] = []
-  const liveNames: string[] = []
+  let liveNames: string[] = []
   const timeMatches: { start: string; end: string }[] = []
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
-    if (timeRangeRegex.test(line)) {
+    const timeMatch = line.match(timeRangeRegex)
+    if (timeMatch) {
       timeIndices.push(i)
-      const m = line.match(timeRangeRegex)
-      if (m) timeMatches.push({ start: m[1].replace('：', ':'), end: m[2].replace('：', ':') })
+      timeMatches.push({ start: timeMatch[1].replace('：', ':'), end: timeMatch[2].replace('：', ':') })
+      // 直播名中内嵌时间（如"普拉提晨练7:00-9:00"）时，去掉时间部分保留直播名
+      const before = line.slice(0, timeMatch.index).trim()
+      const after = line.slice(timeMatch.index! + timeMatch[0].length).trim()
+      for (const part of [before, after]) {
+        if (!part) continue
+        const partTimeMatch = part.match(timeRangeRegex)
+        let cleanPart = part
+        if (partTimeMatch) {
+          timeMatches.push({ start: partTimeMatch[1].replace('：', ':'), end: partTimeMatch[2].replace('：', ':') })
+          cleanPart = (part.slice(0, partTimeMatch.index) + part.slice(partTimeMatch.index! + partTimeMatch[0].length)).trim()
+        }
+        if (!cleanPart) continue
+        if (cleanPart.includes('+')) {
+          liveNames.push(...cleanPart.split('+').map(p => p.trim()).filter(Boolean))
+        } else {
+          liveNames.push(cleanPart)
+        }
+      }
       continue
     }
     if (
       line.includes('开播时间') ||
       line.includes('预约链接') ||
       line.includes('直播间ID') ||
-      line.includes('复用') ||
       line.includes('需剪辑') ||
       line.includes('已有单课id') ||
       line.includes('不回捞') ||
       /^【.+】$/.test(line)
     ) {
+      continue
+    }
+    // 包含"复用"但不等于纯备注：如"伪直播复用 健康营养王溪" → 提取直播名
+    if (line.includes('复用')) {
+      const cleaned = line.replace(/^伪直播复用\s*/, '').replace(/\s*复用\s*$/, '').trim()
+      if (cleaned) {
+        if (cleaned.includes('+')) {
+          liveNames.push(...cleaned.split('+').map(p => p.trim()).filter(Boolean))
+        } else {
+          liveNames.push(cleaned)
+        }
+      }
       continue
     }
     // Skip Excel time values like 0.291666666666667
@@ -448,6 +477,16 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       liveNames.push(...line.split('+').map(p => p.trim()).filter(Boolean))
     } else {
       liveNames.push(line)
+    }
+  }
+
+  // 直播形式标记（如数字人、录播）不是独立直播，过滤后附加到实际直播名
+  const FORM_MARKERS = ['数字人', '录播']
+  const markers = liveNames.filter(n => FORM_MARKERS.includes(n))
+  if (markers.length > 0) {
+    liveNames = liveNames.filter(n => !FORM_MARKERS.includes(n))
+    if (liveNames.length > 0) {
+      liveNames[0] = liveNames[0] + '（' + markers.join('·') + '）'
     }
   }
 
@@ -571,6 +610,61 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       result[0].fakeHistoryAudiences = fakeAudiences
     }
     return result
+  }
+
+  // Multiple live names but not joint live → create independent lives
+  // (e.g. evening flat-broadcast cell with "数字人\n懒人吃瘦")
+  if (liveNames.length > 1 && timeIndices.length <= 1) {
+    const results: LiveStream[] = []
+    let startTime = ''
+    let endTime = ''
+    let link = ''
+    for (const line of lines) {
+      if (line.includes('开播时间')) {
+        const match = line.match(/(\d{1,2}[：:]\d{2})/)
+        if (match) startTime = match[1].replace('：', ':')
+      }
+      if (timeRangeRegex.test(line)) {
+        const match = line.match(timeRangeRegex)
+        if (match) {
+          startTime = match[1].replace('：', ':')
+          endTime = match[2].replace('：', ':')
+        }
+      }
+      if (line.includes('预约链接') || line.includes('http')) {
+        link = extractLink(line)
+      }
+    }
+    for (const name of liveNames) {
+      if (!name) continue
+      const inferredCategory = inferCategory(name)
+      const lineType = parseLine(inferredCategory)
+      results.push({
+        id: generateId(),
+        name,
+        startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
+        endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+        date: day.date,
+        type: 'real',
+        category: inferredCategory,
+        line: lineType,
+        slot,
+        grade: null,
+        owner: '',
+        link,
+        ltv: 80,
+        assignedAudiences: [],
+        exposure: 0,
+        conflictReasons: [],
+        isRecommended: false,
+        isCrossCategory: true,
+      })
+    }
+    // Attach historical audiences to the first live for frequency control
+    if (fakeAudiences.length > 0 && results.length > 0) {
+      results[0].fakeHistoryAudiences = fakeAudiences
+    }
+    return results
   }
 
   // Single live
@@ -1412,7 +1506,11 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
       const al = audLines[i]
       if (al.includes('上次') && (al.includes('排期') || al.includes('直播') || al.includes('宣发'))) {
         isFakeHistory = true
-        if (i + 1 < audLines.length && /年.*—/.test(audLines[i + 1])) {
+        // 先从当前行提取时间范围（如"【上次直播排期】2026年2月2日—2026年5月17日"）
+        const trMatch = al.match(/(\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*)/)
+        if (trMatch) {
+          currentTimeRange = trMatch[1]
+        } else if (i + 1 < audLines.length && /年.*—/.test(audLines[i + 1])) {
           currentTimeRange = audLines[i + 1]
           i++
         }
@@ -1451,7 +1549,7 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
         isFakeHistory = false
         continue
       }
-      if (!currentTimeRange && /年.*—/.test(al)) {
+      if (/年.*—/.test(al)) {
         currentTimeRange = al
         continue
       }

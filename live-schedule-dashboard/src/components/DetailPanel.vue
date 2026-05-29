@@ -205,6 +205,34 @@ function formatGMV(n: number): string {
           </div>
         </div>
 
+        <!-- Fake History Audiences (上周记录·本周剔除) -->
+        <div v-if="(selectedLive.fakeHistoryAudiences ?? []).length > 0" class="mb-4">
+          <div class="mb-2 flex justify-between items-end">
+            <span class="text-[11px] font-semibold tracking-wide text-teal-600 uppercase">
+              上周记录 · 本周剔除 ({{ (selectedLive.fakeHistoryAudiences ?? []).length }})
+            </span>
+            <span class="text-xs text-slate-400">
+              共 {{ ((selectedLive.fakeHistoryAudiences ?? []).reduce((s, a) => s + a.count, 0) / 10000).toFixed(1) }}w
+            </span>
+          </div>
+          <div class="space-y-1.5">
+            <div
+              v-for="aud in (selectedLive.fakeHistoryAudiences ?? [])"
+              :key="aud.segmentId"
+              class="p-2 border border-teal-100 rounded bg-teal-50/30"
+            >
+              <div class="flex items-center justify-between mb-0.5">
+                <div class="flex items-center gap-2">
+                  <div class="w-1 h-3 rounded-full" :class="lineDotClass[aud.line]"></div>
+                  <span class="text-sm text-slate-700">{{ aud.category }}</span>
+                </div>
+                <span class="text-xs font-mono text-slate-500">{{ (aud.count / 10000).toFixed(1) }}w</span>
+              </div>
+              <div class="text-[10px] text-slate-500 pl-3">{{ aud.timeRange }}</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Allocation Controls -->
         <div class="mb-2 flex justify-between items-end">
           <span class="text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
