@@ -323,6 +323,8 @@ function extractFakeHistoryFromCell(lines: string[], defaultLine: LineType = 'in
   // Match audience count: 唱歌（113756） / 唱歌(113756) / 唱歌 113756 / 唱歌:113756 / 唱歌113756
   const audienceRegex = /^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/
 
+  console.log('[extractFakeHistoryFromCell] input lines:', lines)
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (line.includes('上次') && (line.includes('排期') || line.includes('直播') || line.includes('宣发'))) {
@@ -330,6 +332,10 @@ function extractFakeHistoryFromCell(lines: string[], defaultLine: LineType = 'in
       if (i + 1 < lines.length && timeRangeRegex.test(lines[i + 1])) {
         currentTimeRange = lines[i + 1]
         i++
+      } else if (timeRangeRegex.test(line)) {
+        // 标签和时间范围在同一行（如"【上次直播排期】2026年2月2日—2026年5月17日"）
+        const trMatch = line.match(timeRangeRegex)
+        if (trMatch) currentTimeRange = trMatch[1]
       }
       continue
     }
@@ -570,7 +576,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
   }
 
   // Single live
-  let name = liveNames[0] || lines[0] || ''
+  let name = liveNames[0] || ''
   // If first name is unrecognizable but a later name is, prefer the recognizable one
   if (liveNames.length > 1 && inferCategory(name) === name) {
     for (let i = 1; i < liveNames.length; i++) {
