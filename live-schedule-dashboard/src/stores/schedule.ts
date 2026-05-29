@@ -1251,12 +1251,11 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (live.exposure >= target) continue
             const allowedLines = getLiveAllowedLines(live)
             const primaryLine = live.line as LineType
-            // 联合直播在当前 group 遍历时优先尝试当前 line，确保跨线分配
-            const linesToTry = live.isJoint && allowedLines.includes(line)
-              ? [line, ...allowedLines.filter((l) => l !== line)]
-              : allowedLines.includes(primaryLine)
-                ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
-                : allowedLines
+            // 联合直播始终以主品类线级（live.line）为第一优先，
+            // 当前 group line 仅作为 fallback，避免 beauty 主导直播在 health group 中被 health 线挤占
+            const linesToTry = allowedLines.includes(primaryLine)
+              ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+              : allowedLines
             for (const tryLine of linesToTry) {
               const best = pickBest(live, linePools[tryLine])
               if (best) {
