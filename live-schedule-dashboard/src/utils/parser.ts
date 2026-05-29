@@ -323,8 +323,6 @@ function extractFakeHistoryFromCell(lines: string[], defaultLine: LineType = 'in
   // Match audience count: 唱歌（113756） / 唱歌(113756) / 唱歌 113756 / 唱歌:113756 / 唱歌113756
   const audienceRegex = /^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/
 
-  console.log('[extractFakeHistoryFromCell] input lines:', lines)
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     if (line.includes('上次') && (line.includes('排期') || line.includes('直播') || line.includes('宣发'))) {
@@ -1065,7 +1063,7 @@ export function parseLiveDetailSheet(
     }
   }
 
-  console.log('[LiveDetail] Parsed headers:', headers)
+  // console.log('[LiveDetail] Parsed headers:', headers)
   return result
 }
 
@@ -1172,7 +1170,7 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
       break
     }
   }
-  console.log('[Parser Debug] startCol=', startCol, 'headerRow[1]=', normCell(headerRow[1]), 'dateRow[1]=', normCell(dateRow[1]))
+  // console.log('[Parser Debug] startCol=', startCol, 'headerRow[1]=', normCell(headerRow[1]), 'dateRow[1]=', normCell(dateRow[1]))
 
   for (let col = startCol; col < headerRow.length && col <= 8; col++) {
     const label = normCell(headerRow[col])
@@ -1181,7 +1179,7 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
       weekDays.push({ label, date: dateVal, fullDate: buildFullDate(sheetName || '', dateVal, fileName) })
     }
   }
-  console.log('[Parser Debug] weekDays=', weekDays.map(d => d.date).join(','), 'length=', weekDays.length)
+  // console.log('[Parser Debug] weekDays=', weekDays.map(d => d.date).join(','), 'length=', weekDays.length)
 
   let currentSlot: SlotType = 'morning'
   let rowIdx = dateRowIdx + 1
