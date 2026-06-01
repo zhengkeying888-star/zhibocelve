@@ -51,10 +51,11 @@ function detectSlot(resourceName: string): SlotType {
   return 'evening'
 }
 
-function isFakeLive(name: string, slot?: string): boolean {
+function isFakeLive(name: string, _slot?: string): boolean {
   const s = String(name || '').toLowerCase()
+  // 只有名称明确含"数字人"/"录播"的才算伪直播
+  // 复用列(fake-evening slot)里的名师直播仍然是 real
   if (s.includes('数字人') || s.includes('录播')) return true
-  if (slot === 'fake-morning' || slot === 'fake-evening') return true
   return false
 }
 
