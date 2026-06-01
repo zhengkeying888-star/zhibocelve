@@ -931,7 +931,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       function isLowWeightLive(live: LiveStream): boolean {
-        return live.name.includes('数字人') || live.name.includes('录播') || live.name.includes('开心太极')
+        if (live.name.includes('数字人') || live.name.includes('录播')) return true
+        // 开心太极-IP 是 A 级名师直播，不适用低权重限制
+        if (live.name.includes('开心太极') && !live.name.includes('IP')) return true
+        return false
       }
 
       function getLowWeightLimit(live: LiveStream): { maxSegments: number; maxExposure: number } | null {
@@ -1014,6 +1017,15 @@ export const useScheduleStore = defineStore('schedule', () => {
         // 单场直播总段数上限（按等级），防止单场段数过多影响发送速度
         const MAX_TOTAL_SEGMENTS: Record<string, number> = { S: 10, A: 8, B: 7, C: 5 }
         if (live.assignedAudiences.length >= MAX_TOTAL_SEGMENTS[live.grade || 'C']) return null
+
+        // 小段拼凑限制：同一品类族的小段（<5万）不超过2个，防止段数爆炸
+        const SMALL_SEGMENT_THRESHOLD = 50000
+        const assignedSmallSegments = live.assignedAudiences.filter(
+          (a) =>
+            getCategoryFamily(a.category) === getCategoryFamily(seg.category) &&
+            a.count < SMALL_SEGMENT_THRESHOLD,
+        )
+        if (seg.count < SMALL_SEGMENT_THRESHOLD && assignedSmallSegments.length >= 2) return null
 
         // 低权重直播硬性上限（低权重仍按实际段数计，防止过度堆叠）
         const lowLimit = getLowWeightLimit(live)
@@ -1119,11 +1131,11 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         mergeable.sort((a, b) => b.count - a.count)
 
-        // 限制同品类合并数量：S/A/B 级最多额外合并 1 个（同品类共 2 个），C 级不合并
-        // 当直播已分配段数 >= 5 时，不再触发合并扫荡，防止单场段数过多
-        const maxAdditionalByGrade: Record<string, number> = { S: 1, A: 1, B: 1, C: 0 }
+        // 限制同品类合并数量：S/A 级最多额外合并 2 个（同品类共 3 个），B 级额外合并 1 个，C 级不合并
+        // 当直播已分配段数 >= 6 时，不再触发合并扫荡，防止单场段数过多
+        const maxAdditionalByGrade: Record<string, number> = { S: 2, A: 2, B: 1, C: 0 }
         let maxAdditional = maxAdditionalByGrade[live.grade || 'C'] ?? 1
-        if (live.assignedAudiences.length >= 5) maxAdditional = 0
+        if (live.assignedAudiences.length >= 6) maxAdditional = 0
         const toMerge = mergeable.slice(0, maxAdditional)
 
         for (const seg of toMerge) {
@@ -1188,6 +1200,30 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         if (eligible.length === 0) return null
 
+        // 预估 GMV 辅助函数：优先选择匹配度高的品类，减少小段拼凑
+        const liveCat = normalizeCategory(live.category)
+        const liveHist = findHistoricalStat(liveCat)
+        function estimateGMV(seg: AudienceSegment): number {
+          const audCat = normalizeCategory(seg.category)
+          if (liveHist) {
+            // 有历史数据：按历史 GMV 效率估算
+            return seg.count * (liveHist.avgGMV / Math.max(liveHist.avgExposure, 1))
+          }
+          // 无历史数据：按 crossRate × LTV 估算
+          const audCohort = extractCohortMonth(seg.timeRange)
+          let crossRate: number
+          let ltv: number
+          if (isSameCategoryFamily(audCat, liveCat)) {
+            crossRate = 1.0
+            ltv = live.ltv || 80
+          } else {
+            const pref = findCrossPref(audCat, liveCat, audCohort)
+            crossRate = pref?.crossRate || 0
+            ltv = pref?.ltv || live.ltv || 80
+          }
+          return seg.count * crossRate * ltv * gmvMultiplier.value
+        }
+
         eligible.sort((a, b) => {
           // 1. Primary line first (主线优先，中性品类跨线作为 fallback)
           const aPrimary = a.line === live.line
@@ -1209,7 +1245,12 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bDupRange = assignedRanges.has(b.timeRange)
           if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
 
-          // 5. Large count first (大数量段优先)
+          // 5. Estimated GMV first (预估产值优先，减少小段拼凑)
+          const aGMV = estimateGMV(a)
+          const bGMV = estimateGMV(b)
+          if (bGMV !== aGMV) return bGMV - aGMV
+
+          // 6. Large count first (大数量段优先)
           if (b.count !== a.count) return b.count - a.count
 
           return 0

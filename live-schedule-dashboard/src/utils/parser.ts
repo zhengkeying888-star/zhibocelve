@@ -151,6 +151,7 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '气血调理晨练': 'A',
   '短视频复用': 'S',
   '一杰瑜伽': 'S',
+  '开心太极-IP刘海涛': 'A',
 }
 
 export function inferGrade(name: string): 'S' | 'A' | 'B' | 'C' | null {
@@ -319,7 +320,8 @@ function extractFakeHistoryFromCell(lines: string[], defaultLine: LineType = 'in
   let currentTimeRange = ''
 
   // Match time ranges like: 2026年1月19日—2026年5月3日 / 2026.1.19-2026.5.3 / 2023.1-2025.4.13
-  const timeRangeRegex = /(\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*?)/
+  // Use explicit char class instead of .*? to avoid premature truncation
+  const timeRangeRegex = /(\d{4}[年.][\d\s月日.,]*[\-~—]\s*\d{4}[年.][\d\s月日.,]*)/
   // Match audience count: 唱歌（113756） / 唱歌(113756) / 唱歌 113756 / 唱歌:113756 / 唱歌113756
   const audienceRegex = /^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/
 
@@ -448,7 +450,9 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     // 包含"复用"但不等于纯备注：如"伪直播复用 健康营养王溪" → 提取直播名
     if (line.includes('复用')) {
       const cleaned = line.replace(/^伪直播复用\s*/, '').replace(/\s*复用\s*$/, '').trim()
-      if (cleaned) {
+      // 过滤纯数字/日期格式（如"5.27"、"5/25"）和明显备注文字（如"卖摄影美学例子"）
+      const isNoise = /^\d+([.\/]\d+)*$/.test(cleaned) || cleaned.includes('例子')
+      if (cleaned && !isNoise) {
         if (cleaned.includes('+')) {
           liveNames.push(...cleaned.split('+').map(p => p.trim()).filter(Boolean))
         } else {
@@ -489,6 +493,11 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       liveNames[0] = liveNames[0] + '（' + markers.join('·') + '）'
     }
   }
+
+  // 过滤明显不是直播名的备注/例子文字（如"卖摄影美学例子"）
+  const NOTE_MARKERS = ['例子', '示例', '备注', '测试']
+  liveNames = liveNames.filter(n => !NOTE_MARKERS.some(m => n.includes(m)))
+  if (liveNames.length === 0) return []
 
   // 同单元格多行 = 一场联合直播（PRD v2.0，原为早间专享，现扩展至全时段）
   // 非早间时段要求至少 2 个可识别品类名，避免把备注行误判为联合直播
@@ -1459,27 +1468,46 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
 function inferLineKey(rows: any[][], startCol: number): LineType {
   // Try explicit label first
   const label = normCell(rows[0][1])
-  if (label === '健康线') return 'health'
-  if (label === '变美线') return 'beauty'
-  if (label === '兴趣线') return 'interest'
+  let labeledLine: LineType | null = null
+  if (label === '健康线') labeledLine = 'health'
+  else if (label === '变美线') labeledLine = 'beauty'
+  else if (label === '兴趣线') labeledLine = 'interest'
 
   // Fallback: infer from the first audience entry's category
+  let inferredLine: LineType | null = null
   for (let col = startCol; col <= 8; col++) {
     for (const r of rows) {
       const cell = normCell(r[col])
       if (!cell) continue
       const lines = cell.split('\n').map(l => l.trim()).filter(Boolean)
       for (const line of lines) {
-        const match = line.match(/(.+?)[（(](\d+)[）)]/)
+        // Skip annotation lines
+        if (line.includes('人数解读错误') || line.includes('数据错了') || line.includes('时间错了')) continue
+        const match = line.match(/(.+?)[（(][\d,.]+[）)]/)
         if (match) {
           const category = normalizeCategory(match[1].trim())
           const lineType = parseLineFromCategory(category)
-          if (lineType) return lineType
+          if (lineType) {
+            inferredLine = lineType
+            break
+          }
         }
       }
+      if (inferredLine) break
     }
+    if (inferredLine) break
   }
-  return 'health' // ultimate fallback
+
+  // 双向校验：如果排期表线级标签与品类实际线级不一致，优先使用品类实际线级
+  // 例如：变美线标签下出现太极BCD（实际为health线）→ 自动纠正为health
+  if (labeledLine && inferredLine && labeledLine !== inferredLine) {
+    console.warn(
+      `[LineCheck] 线级标签冲突: 排期表标注"${label}"，但品类实际线级为"${inferredLine}"，已自动纠正为"${inferredLine}"`
+    )
+    return inferredLine
+  }
+
+  return labeledLine || inferredLine || 'health'
 }
 
 function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], currentSlot: SlotType, lives: LiveStream[], startCol = 2) {
@@ -1507,7 +1535,7 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
       if (al.includes('上次') && (al.includes('排期') || al.includes('直播') || al.includes('宣发'))) {
         isFakeHistory = true
         // 先从当前行提取时间范围（如"【上次直播排期】2026年2月2日—2026年5月17日"）
-        const trMatch = al.match(/(\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*)/)
+        const trMatch = al.match(/(\d{4}[年.][\d\s月日.,]*[\-~—]\s*\d{4}[年.][\d\s月日.,]*)/)
         if (trMatch) {
           currentTimeRange = trMatch[1]
         } else if (i + 1 < audLines.length && /年.*—/.test(audLines[i + 1])) {
@@ -1517,33 +1545,42 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
         continue
       }
       if (al.includes('【存量】')) {
-        // 【存量】行 = 上次直播排期的存量人群，需全局剔除
-        const remainder = al.replace('【存量】', '').trim()
+        // 【存量】行：在完成版排期表中是实际 audience 分配，不是 fakeHistory
+        // 去掉【存量】前缀后按正常 audience 解析
+        let remainder = al.replace('【存量】', '').trim()
         if (remainder) {
-          const trMatch = remainder.match(/(\d{4}[年.].*?[\-~—]\s*\d{4}[年.].*?)/)
+          // 如果去掉【存量】后只剩下时间范围，设置 currentTimeRange 并继续
+          const trMatch = remainder.match(/(\d{4}[年.][\d\s月日.,]*[\-~—]\s*\d{4}[年.][\d\s月日.,]*)/)
           if (trMatch) {
-            const timeRange = trMatch[1]
+            currentTimeRange = trMatch[1]
             const afterTimeRange = remainder.slice(trMatch.index! + trMatch[0].length).trim()
-            const audienceMatch = afterTimeRange.match(/^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/)
-            if (audienceMatch) {
-              const countStr = audienceMatch[2].replace(/,/g, '')
-              const count = parseInt(countStr, 10)
-              if (!isNaN(count) && count > 0) {
-                const category = normalizeCategory(audienceMatch[1].trim())
-                // Attach 【存量】 to the first real live of the day; never create standalone fake placeholders.
-                const targetLive = dayLives.find(l => l.type === 'real')
-                if (targetLive) {
-                  if (!targetLive.fakeHistoryAudiences) targetLive.fakeHistoryAudiences = []
-                  targetLive.fakeHistoryAudiences.push({
-                    segmentId: generateId(),
-                    line: lineKey,
-                    category,
-                    timeRange,
-                    count,
-                  })
+            if (afterTimeRange) {
+              const audienceMatch = afterTimeRange.match(/^(.+?)[\s:：]*[（(]?([\d,.]+)[）)]?$/)
+              if (audienceMatch) {
+                const countStr = audienceMatch[2].replace(/,/g, '')
+                const count = parseInt(countStr, 10)
+                if (!isNaN(count) && count > 0) {
+                  const category = normalizeCategory(audienceMatch[1].trim())
+                  const targetLive = dayLives.find(l => l.type === 'real' && parseLine(l.name) === lineKey)
+                    || dayLives.find(l => l.type === 'real')
+                    || dayLives[0]
+                  if (targetLive) {
+                    // 使用品类实际线级，避免排期表标签错误（如变美线下出现太极BCD）
+                    const actualLine = parseLineFromCategory(category) || lineKey
+                    targetLive.assignedAudiences.push({
+                      segmentId: generateId(),
+                      line: actualLine,
+                      category,
+                      timeRange: currentTimeRange,
+                      count,
+                    })
+                    targetLive.exposure += count
+                  }
                 }
               }
             }
+          } else if (/年.*—/.test(remainder)) {
+            currentTimeRange = remainder
           }
         }
         isFakeHistory = false
@@ -1585,9 +1622,12 @@ function parseAudienceAssignmentBlock(rows: any[][], weekDays: WeekDay[], curren
               count,
             })
           } else {
+            // 使用品类的实际线级，而不是统一区块线级
+            // 排期表标签可能有误（如变美线下出现太极BCD），以品类实际线级为准
+            const actualLine = parseLineFromCategory(category) || targetLive.line
             targetLive.assignedAudiences.push({
               segmentId: generateId(),
-              line: targetLive.line,
+              line: actualLine,
               category,
               timeRange: currentTimeRange,
               count,
