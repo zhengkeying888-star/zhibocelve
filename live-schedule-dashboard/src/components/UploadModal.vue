@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, defineComponent, h } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
+import type { GradeType } from '@/types'
 import {
   parseScheduleWorkbook,
   parseAudienceSheet,
@@ -12,6 +13,48 @@ const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'done'): void }>()
 
 const store = useScheduleStore()
+
+// Reusable editable live tag for confirmation panel
+const LiveEditTag = defineComponent({
+  props: {
+    live: { type: Object, required: true },
+    dim: { type: Boolean, default: false },
+  },
+  setup(props) {
+    return () => {
+      const live = props.live as LivePreview
+      const dim = props.dim
+      const baseCls = dim
+        ? 'bg-slate-100 border-slate-200 text-slate-500'
+        : 'bg-white border-slate-200 text-slate-700'
+      const selCls = dim
+        ? 'bg-slate-200 border-slate-300 text-slate-500'
+        : 'bg-white border-slate-300 text-slate-700'
+      return h('span', {
+        class: `inline-flex items-center gap-1 px-2 py-0.5 rounded border ${baseCls}`,
+      }, [
+        h('span', { class: 'font-medium' }, live.name),
+        h('select', {
+          value: live.grade || '',
+          onChange: (e: Event) => updateLiveGrade(live.id, (e.target as HTMLSelectElement).value || null),
+          class: `text-[10px] px-0.5 py-0 rounded border outline-none cursor-pointer ${selCls}`,
+        }, GRADE_OPTIONS.map((g) => h('option', { value: g.value, key: g.value }, g.label))),
+        !dim
+          ? h('input', {
+              value: live.category,
+              onBlur: (e: Event) => updateLiveCategory(live.id, (e.target as HTMLInputElement).value),
+              class: 'text-[10px] w-14 px-1 py-0 rounded border border-slate-200 outline-none text-slate-400',
+            })
+          : null,
+        h('button', {
+          onClick: (e: MouseEvent) => { e.stopPropagation(); removeLive(live.id) },
+          class: 'text-slate-300 hover:text-red-500 leading-none ml-0.5 text-xs',
+          title: '删除',
+        }, '×'),
+      ])
+    }
+  },
+})
 
 function formatWeekRange(weekDays: { fullDate: string }[]): string {
   if (weekDays.length === 0) return ''
@@ -54,6 +97,7 @@ watch(() => props.open, (isOpen) => {
 })
 
 interface LivePreview {
+  id: string
   name: string
   category: string
   grade: string | null
@@ -95,6 +139,14 @@ interface UploadSummary {
   lineDistribution: Record<string, { real: LivePreview[]; fake: LivePreview[] }>
 }
 const uploadSummary = ref<UploadSummary | null>(null)
+
+const GRADE_OPTIONS = [
+  { label: 'S', value: 'S', cls: 'bg-red-50 text-red-600' },
+  { label: 'A', value: 'A', cls: 'bg-orange-50 text-orange-600' },
+  { label: 'B', value: 'B', cls: 'bg-blue-50 text-blue-600' },
+  { label: 'C', value: 'C', cls: 'bg-slate-100 text-slate-500' },
+  { label: '—', value: '', cls: 'bg-slate-50 text-slate-400' },
+]
 
 function onFileSelect(key: string, event: Event) {
   const input = event.target as HTMLInputElement
@@ -212,7 +264,7 @@ async function handleSubmit() {
   const shouldAutoSchedule = !realLivesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))
 
   // Build detailed schedule preview (real + fake, separated)
-  const toPreview = (l: any): LivePreview => ({ name: l.name, category: l.category, grade: l.grade, line: l.line, type: l.type })
+  const toPreview = (l: any): LivePreview => ({ id: l.id, name: l.name, category: l.category, grade: l.grade, line: l.line, type: l.type })
   const bySlot = (lives: any[], slot: string) => lives.filter((l: any) => l.slot === slot || l.slot === `fake-${slot}`)
 
   const scheduleByDay: DaySchedule[] = store.weekDays.map((day: any) => {
@@ -271,6 +323,100 @@ async function handleSubmit() {
     lineDistribution,
   }
   showConfirm.value = true
+}
+
+// Inline edit helpers: modify store live and refresh summary
+function updateLiveGrade(liveId: string, grade: string | null) {
+  const live = store.liveStreams.find((l: any) => l.id === liveId)
+  if (live) {
+    live.grade = grade as GradeType | null
+    recalcSummary()
+  }
+}
+
+function updateLiveCategory(liveId: string, category: string) {
+  const live = store.liveStreams.find((l: any) => l.id === liveId)
+  if (live) {
+    live.category = category
+    recalcSummary()
+  }
+}
+
+function removeLive(liveId: string) {
+  const idx = store.liveStreams.findIndex((l: any) => l.id === liveId)
+  if (idx !== -1) {
+    store.liveStreams.splice(idx, 1)
+    recalcSummary()
+  }
+}
+
+function recalcSummary() {
+  if (!uploadSummary.value) return
+  const realLives = store.liveStreams.filter((l: any) => l.type === 'real').length
+  const fakeLives = store.liveStreams.filter((l: any) => l.type === 'fake').length
+  const hasAudience = store.audienceSegments.length > 0
+  const hasCrossPref = files.value.some((f: any) => f.key === 'crossPref' && f.status === 'done')
+  const realLivesHaveAssignments = store.liveStreams.some((l: any) => l.type === 'real' && l.assignedAudiences.length > 0)
+  const shouldAutoSchedule = !realLivesHaveAssignments && hasAudience && (hasCrossPref || files.value.some((f: any) => f.key === 'schedule' && f.status === 'done') || files.value.some((f: any) => f.key === 'audience' && f.status === 'done'))
+
+  const toPreview = (l: any): LivePreview => ({ id: l.id, name: l.name, category: l.category, grade: l.grade, line: l.line, type: l.type })
+  const bySlot = (lives: any[], slot: string) => lives.filter((l: any) => l.slot === slot || l.slot === `fake-${slot}`)
+
+  const scheduleByDay: DaySchedule[] = store.weekDays.map((day: any) => {
+    const dayLives = store.liveStreams.filter((l: any) => l.date === day.fullDate)
+    const morningLives = bySlot(dayLives, 'morning')
+    const eveningLives = bySlot(dayLives, 'evening')
+    const fcLives = dayLives.filter((l: any) => l.slot === 'friend-circle')
+    return {
+      date: day.fullDate,
+      dayLabel: day.date,
+      morning: { real: morningLives.filter((l: any) => l.type === 'real').map(toPreview), fake: morningLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+      evening: { real: eveningLives.filter((l: any) => l.type === 'real').map(toPreview), fake: eveningLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+      friendCircle: { real: fcLives.filter((l: any) => l.type === 'real').map(toPreview), fake: fcLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+    }
+  }).filter((d: DaySchedule) =>
+    d.morning.real.length + d.morning.fake.length +
+    d.evening.real.length + d.evening.fake.length +
+    d.friendCircle.real.length + d.friendCircle.fake.length > 0
+  )
+
+  const buildGradeDist = (slotPrefix: string): GradeDistribution => {
+    const slotLives = store.liveStreams.filter((l: any) => l.slot === slotPrefix || l.slot === `fake-${slotPrefix}`)
+    return {
+      S: { real: slotLives.filter((l: any) => l.grade === 'S' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'S' && l.type === 'fake').map(toPreview) },
+      A: { real: slotLives.filter((l: any) => l.grade === 'A' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'A' && l.type === 'fake').map(toPreview) },
+      B: { real: slotLives.filter((l: any) => l.grade === 'B' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'B' && l.type === 'fake').map(toPreview) },
+      C: { real: slotLives.filter((l: any) => l.grade === 'C' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'C' && l.type === 'fake').map(toPreview) },
+    }
+  }
+  const morningGrades = buildGradeDist('morning')
+  const eveningGrades = buildGradeDist('evening')
+
+  const lineKeys: Record<string, string> = { health: '健康线', beauty: '变美线', interest: '兴趣线' }
+  const lineDistribution: Record<string, { real: LivePreview[]; fake: LivePreview[] }> = {}
+  for (const line of ['health', 'beauty', 'interest'] as const) {
+    const lives = store.liveStreams.filter((l: any) => l.line === line)
+    if (lives.length > 0) {
+      lineDistribution[lineKeys[line] || line] = {
+        real: lives.filter((l: any) => l.type === 'real').map(toPreview),
+        fake: lives.filter((l: any) => l.type === 'fake').map(toPreview),
+      }
+    }
+  }
+
+  uploadSummary.value = {
+    realLives,
+    fakeLives,
+    audienceSegments: store.audienceSegments.length,
+    audienceCategories: new Set(store.audienceSegments.map((s: any) => s.category)).size,
+    crossPrefs: store.crossCategoryPrefs.length,
+    historyRecords: store.historyRecords.length,
+    shouldAutoSchedule,
+    scheduleByDay,
+    morningGrades,
+    eveningGrades,
+    lineDistribution,
+  }
 }
 
 async function handleConfirm() {
@@ -394,25 +540,13 @@ function reset() {
                           <div v-if="day.morning.real.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.morning.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
-                                  'bg-red-50 text-red-600': live.grade === 'S',
-                                  'bg-orange-50 text-orange-600': live.grade === 'A',
-                                  'bg-blue-50 text-blue-600': live.grade === 'B',
-                                  'bg-slate-100 text-slate-500': live.grade === 'C',
-                                }">{{ live.grade }}</span>
-                                <span class="text-slate-400">{{ live.category }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.morning.real" :key="live.id" :live="live" />
                             </div>
                           </div>
                           <div v-if="day.morning.fake.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.morning.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.morning.fake" :key="live.id" :live="live" dim />
                             </div>
                           </div>
                         </div>
@@ -422,25 +556,13 @@ function reset() {
                           <div v-if="day.evening.real.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.evening.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
-                                  'bg-red-50 text-red-600': live.grade === 'S',
-                                  'bg-orange-50 text-orange-600': live.grade === 'A',
-                                  'bg-blue-50 text-blue-600': live.grade === 'B',
-                                  'bg-slate-100 text-slate-500': live.grade === 'C',
-                                }">{{ live.grade }}</span>
-                                <span class="text-slate-400">{{ live.category }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.evening.real" :key="live.id" :live="live" />
                             </div>
                           </div>
                           <div v-if="day.evening.fake.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.evening.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.evening.fake" :key="live.id" :live="live" dim />
                             </div>
                           </div>
                         </div>
@@ -450,25 +572,13 @@ function reset() {
                           <div v-if="day.friendCircle.real.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.friendCircle.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
-                                  'bg-red-50 text-red-600': live.grade === 'S',
-                                  'bg-orange-50 text-orange-600': live.grade === 'A',
-                                  'bg-blue-50 text-blue-600': live.grade === 'B',
-                                  'bg-slate-100 text-slate-500': live.grade === 'C',
-                                }">{{ live.grade }}</span>
-                                <span class="text-slate-400">{{ live.category }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.friendCircle.real" :key="live.id" :live="live" />
                             </div>
                           </div>
                           <div v-if="day.friendCircle.fake.length" class="flex gap-2">
                             <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
                             <div class="flex flex-wrap gap-1.5">
-                              <span v-for="live in day.friendCircle.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
-                                <span class="font-medium">{{ live.name }}</span>
-                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
-                              </span>
+                              <LiveEditTag v-for="live in day.friendCircle.fake" :key="live.id" :live="live" dim />
                             </div>
                           </div>
                         </div>
@@ -495,10 +605,10 @@ function reset() {
                           <span class="text-[10px] text-slate-400">真{{ data.real.length }} / 伪{{ data.fake.length }}</span>
                         </div>
                         <div v-if="data.real.length" class="flex flex-wrap gap-1 pl-6">
-                          <span v-for="live in data.real" :key="live.name" class="text-[11px] text-slate-600">{{ live.name }}<span class="text-slate-300">（{{ live.category }}）</span></span>
+                          <LiveEditTag v-for="live in data.real" :key="live.id" :live="live" />
                         </div>
                         <div v-if="data.fake.length" class="flex flex-wrap gap-1 pl-6">
-                          <span v-for="live in data.fake" :key="live.name" class="text-[11px] text-slate-400">{{ live.name }}</span>
+                          <LiveEditTag v-for="live in data.fake" :key="live.id" :live="live" dim />
                         </div>
                       </div>
                     </div>
@@ -516,10 +626,10 @@ function reset() {
                           <span class="text-[10px] text-slate-400">真{{ data.real.length }} / 伪{{ data.fake.length }}</span>
                         </div>
                         <div v-if="data.real.length" class="flex flex-wrap gap-1 pl-6">
-                          <span v-for="live in data.real" :key="live.name" class="text-[11px] text-slate-600">{{ live.name }}<span class="text-slate-300">（{{ live.category }}）</span></span>
+                          <LiveEditTag v-for="live in data.real" :key="live.id" :live="live" />
                         </div>
                         <div v-if="data.fake.length" class="flex flex-wrap gap-1 pl-6">
-                          <span v-for="live in data.fake" :key="live.name" class="text-[11px] text-slate-400">{{ live.name }}</span>
+                          <LiveEditTag v-for="live in data.fake" :key="live.id" :live="live" dim />
                         </div>
                       </div>
                     </div>
@@ -540,25 +650,13 @@ function reset() {
                       <div v-if="data.real.length" class="mb-1.5">
                         <div class="text-[10px] text-emerald-600 font-bold mb-1">真直播</div>
                         <div class="flex flex-wrap gap-1.5">
-                          <span v-for="live in data.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-xs text-slate-600">
-                            {{ live.name }}
-                            <span v-if="live.grade" class="text-[10px] px-1 rounded" :class="{
-                              'bg-red-50 text-red-600': live.grade === 'S',
-                              'bg-orange-50 text-orange-600': live.grade === 'A',
-                              'bg-blue-50 text-blue-600': live.grade === 'B',
-                              'bg-slate-100 text-slate-500': live.grade === 'C',
-                            }">{{ live.grade }}</span>
-                            <span class="text-slate-400 text-[10px]">{{ live.category }}</span>
-                          </span>
+                          <LiveEditTag v-for="live in data.real" :key="live.id" :live="live" />
                         </div>
                       </div>
                       <div v-if="data.fake.length">
                         <div class="text-[10px] text-slate-400 font-bold mb-1">伪直播</div>
                         <div class="flex flex-wrap gap-1.5">
-                          <span v-for="live in data.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-xs text-slate-400">
-                            {{ live.name }}
-                            <span v-if="live.grade" class="text-[10px] text-slate-400">{{ live.grade }}</span>
-                          </span>
+                          <LiveEditTag v-for="live in data.fake" :key="live.id" :live="live" dim />
                         </div>
                       </div>
                     </div>
