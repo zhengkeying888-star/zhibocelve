@@ -51,6 +51,13 @@ function detectSlot(resourceName: string): SlotType {
   return 'evening'
 }
 
+function isFakeLive(name: string, slot?: string): boolean {
+  const s = String(name || '').toLowerCase()
+  if (s.includes('数字人') || s.includes('录播')) return true
+  if (slot === 'fake-morning' || slot === 'fake-evening') return true
+  return false
+}
+
 function normCell(v: any): string {
   if (v === undefined || v === null) return ''
   const s = String(v).trim()
@@ -525,7 +532,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       startTime,
       endTime,
       date: day.date,
-      type: 'real',
+      type: isFakeLive(liveNames.join(' + '), slot) ? 'fake' : 'real',
       category: primaryCategory,
       categories,
       line: primaryLine,
@@ -587,7 +594,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         startTime,
         endTime,
         date: day.date,
-        type: 'real',
+        type: isFakeLive(name, slot) ? 'fake' : 'real',
         category: inferCategory(name),
         line: lineType,
         slot,
@@ -654,7 +661,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
         endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
         date: day.date,
-        type: 'real',
+        type: isFakeLive(name, slot) ? 'fake' : 'real',
         category: inferredCategory,
         line: lineType,
         slot,
@@ -720,7 +727,7 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
       endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
       date: day.date,
-      type: 'real',
+      type: isFakeLive(name, slot) ? 'fake' : 'real',
       category: inferredCategory,
       line: lineType,
       slot,

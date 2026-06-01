@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useScheduleStore } from '@/stores/schedule'
 import {
   parseScheduleWorkbook,
@@ -45,6 +45,42 @@ const files = ref<FileItem[]>([
 const overallStatus = ref<'idle' | 'parsing' | 'done'>('idle')
 const showConfirm = ref(false)
 
+// Reset confirmation state when modal is opened/closed
+watch(() => props.open, (isOpen) => {
+  if (!isOpen) {
+    showConfirm.value = false
+    uploadSummary.value = null
+  }
+})
+
+interface LivePreview {
+  name: string
+  category: string
+  grade: string | null
+  line: string
+  type: 'real' | 'fake'
+}
+
+interface SlotLives {
+  real: LivePreview[]
+  fake: LivePreview[]
+}
+
+interface DaySchedule {
+  date: string
+  dayLabel: string
+  morning: SlotLives
+  evening: SlotLives
+  friendCircle: SlotLives
+}
+
+interface GradeDistribution {
+  S: { real: LivePreview[]; fake: LivePreview[] }
+  A: { real: LivePreview[]; fake: LivePreview[] }
+  B: { real: LivePreview[]; fake: LivePreview[] }
+  C: { real: LivePreview[]; fake: LivePreview[] }
+}
+
 interface UploadSummary {
   realLives: number
   fakeLives: number
@@ -53,6 +89,10 @@ interface UploadSummary {
   crossPrefs: number
   historyRecords: number
   shouldAutoSchedule: boolean
+  scheduleByDay: DaySchedule[]
+  morningGrades: GradeDistribution
+  eveningGrades: GradeDistribution
+  lineDistribution: Record<string, { real: LivePreview[]; fake: LivePreview[] }>
 }
 const uploadSummary = ref<UploadSummary | null>(null)
 
@@ -171,6 +211,52 @@ async function handleSubmit() {
   const realLivesHaveAssignments = store.liveStreams.some(l => l.type === 'real' && l.assignedAudiences.length > 0)
   const shouldAutoSchedule = !realLivesHaveAssignments && hasAudience && (hasCrossPref || files.value.some(f => f.key === 'schedule' && f.status === 'done') || files.value.some(f => f.key === 'audience' && f.status === 'done'))
 
+  // Build detailed schedule preview (real + fake, separated)
+  const toPreview = (l: any): LivePreview => ({ name: l.name, category: l.category, grade: l.grade, line: l.line, type: l.type })
+  const bySlot = (lives: any[], slot: string) => lives.filter((l: any) => l.slot === slot || l.slot === `fake-${slot}`)
+
+  const scheduleByDay: DaySchedule[] = store.weekDays.map((day: any) => {
+    const dayLives = store.liveStreams.filter((l: any) => l.date === day.fullDate)
+    const morningLives = bySlot(dayLives, 'morning')
+    const eveningLives = bySlot(dayLives, 'evening')
+    const fcLives = dayLives.filter((l: any) => l.slot === 'friend-circle')
+    return {
+      date: day.fullDate,
+      dayLabel: day.date,
+      morning: { real: morningLives.filter((l: any) => l.type === 'real').map(toPreview), fake: morningLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+      evening: { real: eveningLives.filter((l: any) => l.type === 'real').map(toPreview), fake: eveningLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+      friendCircle: { real: fcLives.filter((l: any) => l.type === 'real').map(toPreview), fake: fcLives.filter((l: any) => l.type === 'fake').map(toPreview) },
+    }
+  }).filter((d: DaySchedule) =>
+    d.morning.real.length + d.morning.fake.length +
+    d.evening.real.length + d.evening.fake.length +
+    d.friendCircle.real.length + d.friendCircle.fake.length > 0
+  )
+
+  const buildGradeDist = (slotPrefix: string): GradeDistribution => {
+    const slotLives = store.liveStreams.filter((l: any) => l.slot === slotPrefix || l.slot === `fake-${slotPrefix}`)
+    return {
+      S: { real: slotLives.filter((l: any) => l.grade === 'S' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'S' && l.type === 'fake').map(toPreview) },
+      A: { real: slotLives.filter((l: any) => l.grade === 'A' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'A' && l.type === 'fake').map(toPreview) },
+      B: { real: slotLives.filter((l: any) => l.grade === 'B' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'B' && l.type === 'fake').map(toPreview) },
+      C: { real: slotLives.filter((l: any) => l.grade === 'C' && l.type === 'real').map(toPreview), fake: slotLives.filter((l: any) => l.grade === 'C' && l.type === 'fake').map(toPreview) },
+    }
+  }
+  const morningGrades = buildGradeDist('morning')
+  const eveningGrades = buildGradeDist('evening')
+
+  const lineKeys: Record<string, string> = { health: '健康线', beauty: '变美线', interest: '兴趣线' }
+  const lineDistribution: Record<string, { real: LivePreview[]; fake: LivePreview[] }> = {}
+  for (const line of ['health', 'beauty', 'interest'] as const) {
+    const lives = store.liveStreams.filter((l: any) => l.line === line)
+    if (lives.length > 0) {
+      lineDistribution[lineKeys[line] || line] = {
+        real: lives.filter((l: any) => l.type === 'real').map(toPreview),
+        fake: lives.filter((l: any) => l.type === 'fake').map(toPreview),
+      }
+    }
+  }
+
   uploadSummary.value = {
     realLives,
     fakeLives,
@@ -179,6 +265,10 @@ async function handleSubmit() {
     crossPrefs: store.crossCategoryPrefs.length,
     historyRecords: store.historyRecords.length,
     shouldAutoSchedule,
+    scheduleByDay,
+    morningGrades,
+    eveningGrades,
+    lineDistribution,
   }
   showConfirm.value = true
 }
@@ -279,30 +369,219 @@ function reset() {
 
             <!-- Confirmation panel -->
             <template v-else>
-              <div class="space-y-4">
+              <div class="space-y-5">
                 <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                  <h3 class="text-sm font-bold text-emerald-800 mb-2">&#10003; 数据解析完成</h3>
-                  <p class="text-xs text-emerald-600">请确认以下统计信息无误后，点击「确认并生成排期」</p>
+                  <h3 class="text-sm font-bold text-emerald-800 mb-1">&#10003; 数据解析完成</h3>
+                  <p class="text-xs text-emerald-600">请核对以下排期信息，确认无误后点击「确认并生成排期」</p>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
-                  <div class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <div class="text-xs text-slate-500 mb-1">本周直播场次</div>
-                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.realLives }} <span class="text-xs font-normal text-slate-500">场 real</span></div>
-                    <div v-if="uploadSummary?.fakeLives" class="text-xs text-slate-500 mt-0.5">+ {{ uploadSummary.fakeLives }} 场 fake</div>
+                <!-- 1. 时间段排期（按天 → 晨练/晚间 → 真/伪） -->
+                <div>
+                  <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">&#128197; 时间段排期</h4>
+                  <div class="space-y-2">
+                    <div v-for="day in uploadSummary?.scheduleByDay" :key="day.date" class="bg-slate-50 rounded-lg border border-slate-200 overflow-hidden">
+                      <div class="px-3 py-2 bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700 flex items-center justify-between">
+                        <span>{{ day.dayLabel }}</span>
+                        <span class="text-slate-400 font-normal">
+                          真{{ (day.morning.real.length + day.evening.real.length + day.friendCircle.real.length) }} /
+                          伪{{ (day.morning.fake.length + day.evening.fake.length + day.friendCircle.fake.length) }}
+                        </span>
+                      </div>
+                      <div class="p-3 space-y-2.5 text-xs">
+                        <!-- 晨练 -->
+                        <div v-if="day.morning.real.length + day.morning.fake.length" class="space-y-1.5">
+                          <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">晨练</div>
+                          <div v-if="day.morning.real.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.morning.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
+                                  'bg-red-50 text-red-600': live.grade === 'S',
+                                  'bg-orange-50 text-orange-600': live.grade === 'A',
+                                  'bg-blue-50 text-blue-600': live.grade === 'B',
+                                  'bg-slate-100 text-slate-500': live.grade === 'C',
+                                }">{{ live.grade }}</span>
+                                <span class="text-slate-400">{{ live.category }}</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div v-if="day.morning.fake.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.morning.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <!-- 晚间 -->
+                        <div v-if="day.evening.real.length + day.evening.fake.length" class="space-y-1.5">
+                          <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">晚间</div>
+                          <div v-if="day.evening.real.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.evening.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
+                                  'bg-red-50 text-red-600': live.grade === 'S',
+                                  'bg-orange-50 text-orange-600': live.grade === 'A',
+                                  'bg-blue-50 text-blue-600': live.grade === 'B',
+                                  'bg-slate-100 text-slate-500': live.grade === 'C',
+                                }">{{ live.grade }}</span>
+                                <span class="text-slate-400">{{ live.category }}</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div v-if="day.evening.fake.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.evening.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <!-- 朋友圈 -->
+                        <div v-if="day.friendCircle.real.length + day.friendCircle.fake.length" class="space-y-1.5">
+                          <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">朋友圈</div>
+                          <div v-if="day.friendCircle.real.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold">真直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.friendCircle.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-slate-700">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded" :class="{
+                                  'bg-red-50 text-red-600': live.grade === 'S',
+                                  'bg-orange-50 text-orange-600': live.grade === 'A',
+                                  'bg-blue-50 text-blue-600': live.grade === 'B',
+                                  'bg-slate-100 text-slate-500': live.grade === 'C',
+                                }">{{ live.grade }}</span>
+                                <span class="text-slate-400">{{ live.category }}</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div v-if="day.friendCircle.fake.length" class="flex gap-2">
+                            <span class="shrink-0 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px] font-bold">伪直播</span>
+                            <div class="flex flex-wrap gap-1.5">
+                              <span v-for="live in day.friendCircle.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-slate-500">
+                                <span class="font-medium">{{ live.name }}</span>
+                                <span v-if="live.grade" class="text-[10px] px-1 py-0 rounded bg-slate-200 text-slate-500">{{ live.grade }}</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <div class="text-xs text-slate-500 mb-1">Audience 段数</div>
-                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.audienceSegments }} <span class="text-xs font-normal text-slate-500">段</span></div>
-                    <div class="text-xs text-slate-500 mt-0.5">覆盖 {{ uploadSummary?.audienceCategories }} 个品类</div>
+                </div>
+
+                <!-- 2. 直播等级分布（按晨练/晚间分板块） -->
+                <div>
+                  <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">&#11088; 直播等级分布</h4>
+                  <div class="grid grid-cols-2 gap-3">
+                    <!-- 晨练 -->
+                    <div class="bg-slate-50 rounded-lg border border-slate-200 p-3 space-y-2">
+                      <div class="text-xs font-bold text-slate-700 border-b border-slate-200 pb-1.5">晨练</div>
+                      <div v-for="(data, grade) in uploadSummary?.morningGrades" :key="'m-'+grade" class="space-y-1">
+                        <div class="flex items-center gap-1.5">
+                          <span class="shrink-0 w-5 h-5 flex items-center justify-center rounded font-bold text-[10px]" :class="{
+                            'bg-red-50 text-red-600 border border-red-100': grade === 'S',
+                            'bg-orange-50 text-orange-600 border border-orange-100': grade === 'A',
+                            'bg-blue-50 text-blue-600 border border-blue-100': grade === 'B',
+                            'bg-slate-100 text-slate-500 border border-slate-200': grade === 'C',
+                          }">{{ grade }}</span>
+                          <span class="text-[10px] text-slate-400">真{{ data.real.length }} / 伪{{ data.fake.length }}</span>
+                        </div>
+                        <div v-if="data.real.length" class="flex flex-wrap gap-1 pl-6">
+                          <span v-for="live in data.real" :key="live.name" class="text-[11px] text-slate-600">{{ live.name }}<span class="text-slate-300">（{{ live.category }}）</span></span>
+                        </div>
+                        <div v-if="data.fake.length" class="flex flex-wrap gap-1 pl-6">
+                          <span v-for="live in data.fake" :key="live.name" class="text-[11px] text-slate-400">{{ live.name }}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- 晚间 -->
+                    <div class="bg-slate-50 rounded-lg border border-slate-200 p-3 space-y-2">
+                      <div class="text-xs font-bold text-slate-700 border-b border-slate-200 pb-1.5">晚间</div>
+                      <div v-for="(data, grade) in uploadSummary?.eveningGrades" :key="'e-'+grade" class="space-y-1">
+                        <div class="flex items-center gap-1.5">
+                          <span class="shrink-0 w-5 h-5 flex items-center justify-center rounded font-bold text-[10px]" :class="{
+                            'bg-red-50 text-red-600 border border-red-100': grade === 'S',
+                            'bg-orange-50 text-orange-600 border border-orange-100': grade === 'A',
+                            'bg-blue-50 text-blue-600 border border-blue-100': grade === 'B',
+                            'bg-slate-100 text-slate-500 border border-slate-200': grade === 'C',
+                          }">{{ grade }}</span>
+                          <span class="text-[10px] text-slate-400">真{{ data.real.length }} / 伪{{ data.fake.length }}</span>
+                        </div>
+                        <div v-if="data.real.length" class="flex flex-wrap gap-1 pl-6">
+                          <span v-for="live in data.real" :key="live.name" class="text-[11px] text-slate-600">{{ live.name }}<span class="text-slate-300">（{{ live.category }}）</span></span>
+                        </div>
+                        <div v-if="data.fake.length" class="flex flex-wrap gap-1 pl-6">
+                          <span v-for="live in data.fake" :key="live.name" class="text-[11px] text-slate-400">{{ live.name }}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <div class="text-xs text-slate-500 mb-1">跨科偏好</div>
-                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.crossPrefs }} <span class="text-xs font-normal text-slate-500">条</span></div>
+                </div>
+
+                <!-- 3. 直播分类（按板块/线级） -->
+                <div>
+                  <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">&#128204; 直播分类（按板块）</h4>
+                  <div class="space-y-2">
+                    <div v-for="(data, lineName) in uploadSummary?.lineDistribution" :key="lineName" class="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="text-xs font-bold text-slate-700">{{ lineName }}</div>
+                        <div class="text-[10px] text-slate-400">
+                          真{{ data.real.length }} / 伪{{ data.fake.length }}
+                        </div>
+                      </div>
+                      <div v-if="data.real.length" class="mb-1.5">
+                        <div class="text-[10px] text-emerald-600 font-bold mb-1">真直播</div>
+                        <div class="flex flex-wrap gap-1.5">
+                          <span v-for="live in data.real" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded text-xs text-slate-600">
+                            {{ live.name }}
+                            <span v-if="live.grade" class="text-[10px] px-1 rounded" :class="{
+                              'bg-red-50 text-red-600': live.grade === 'S',
+                              'bg-orange-50 text-orange-600': live.grade === 'A',
+                              'bg-blue-50 text-blue-600': live.grade === 'B',
+                              'bg-slate-100 text-slate-500': live.grade === 'C',
+                            }">{{ live.grade }}</span>
+                            <span class="text-slate-400 text-[10px]">{{ live.category }}</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div v-if="data.fake.length">
+                        <div class="text-[10px] text-slate-400 font-bold mb-1">伪直播</div>
+                        <div class="flex flex-wrap gap-1.5">
+                          <span v-for="live in data.fake" :key="live.name" class="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 border border-slate-200 rounded text-xs text-slate-400">
+                            {{ live.name }}
+                            <span v-if="live.grade" class="text-[10px] text-slate-400">{{ live.grade }}</span>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div class="bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <div class="text-xs text-slate-500 mb-1">历史记录</div>
-                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.historyRecords }} <span class="text-xs font-normal text-slate-500">条</span></div>
+                </div>
+
+                <!-- 4. 基础统计 -->
+                <div class="grid grid-cols-4 gap-2">
+                  <div class="bg-slate-50 rounded-lg p-2 border border-slate-200 text-center">
+                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.realLives }}</div>
+                    <div class="text-[10px] text-slate-500">real 场次</div>
+                  </div>
+                  <div class="bg-slate-50 rounded-lg p-2 border border-slate-200 text-center">
+                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.fakeLives }}</div>
+                    <div class="text-[10px] text-slate-500">fake 场次</div>
+                  </div>
+                  <div class="bg-slate-50 rounded-lg p-2 border border-slate-200 text-center">
+                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.audienceSegments }}</div>
+                    <div class="text-[10px] text-slate-500">audience 段</div>
+                  </div>
+                  <div class="bg-slate-50 rounded-lg p-2 border border-slate-200 text-center">
+                    <div class="text-lg font-bold text-slate-900">{{ uploadSummary?.crossPrefs }}</div>
+                    <div class="text-[10px] text-slate-500">跨科偏好</div>
                   </div>
                 </div>
 
