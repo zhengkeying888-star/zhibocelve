@@ -35,7 +35,7 @@ function loadFromStorage<T>(key: string, fallback: T): T {
 export const useScheduleStore = defineStore('schedule', () => {
   // Breaking-change data version: bump this whenever autoSchedule logic changes
   // in a way that makes old persisted assignments invalid.
-  const DATA_VERSION = 'v3.4-joint-cross-line-grade-variants-20260521'
+  const DATA_VERSION = 'v3.4-fake-reuse-redline-20260608'
 
   // ========== State ==========
   const liveStreams = ref<LiveStream[]>([])
@@ -82,6 +82,10 @@ export const useScheduleStore = defineStore('schedule', () => {
 
   // PRD v2.0: neutral categories that can cross beauty → health
   const NEUTRAL_CATEGORIES = new Set(['东方养正瑜伽'])
+  const MULTI_LINE_CATEGORIES: Record<string, LineType[]> = {
+    '茶道': ['interest', 'health'],
+  }
+  const COLD_START_SAME_LINE_RATE = 0.08
 
   // Adjusted target exposure based on actual human scheduling behavior.
   // Human schedules do not stop at fixed targets; famous hosts get as many
@@ -93,6 +97,8 @@ export const useScheduleStore = defineStore('schedule', () => {
     B: 350000,
     C: 250000,
   }
+  const MIN_ACCEPTABLE_EXPOSURE = 150000
+  const PREFERRED_MIN_EXPOSURE = 200000
 
   // Max segments per live by grade (human rule: famous hosts = more segments)
   const MAX_SEGMENTS_BY_GRADE: Record<string, number> = {
@@ -490,7 +496,7 @@ export const useScheduleStore = defineStore('schedule', () => {
    * 3. 最长子串匹配（处理逆龄女神瑜伽 → 瑜伽等明细表归大类场景）
    */
   function findHistoricalStat(cat: string): import('@/types').CategoryHistoricalStat | undefined {
-    const stats = categoryHistoricalStats.value
+    const stats = categoryHistoricalStats.value || {}
     if (stats[cat]) return stats[cat]
 
     const family = getCategoryFamily(cat)
@@ -527,12 +533,9 @@ export const useScheduleStore = defineStore('schedule', () => {
   }
 
   function resolveDate(d: string): Date {
-    let parsed = parseDate(d)
-    if (isNaN(parsed.getTime())) {
-      const full = weekDays.value.find((w) => w.date === d)?.fullDate
-      if (full) parsed = parseDate(full)
-    }
-    return parsed
+    const matchedDay = weekDays.value.find((w) => w.date === d || w.fullDate === d || w.label === d)
+    if (matchedDay) return parseDate(matchedDay.fullDate)
+    return parseDate(d)
   }
 
   function daysBetween(a: string, b: string): number {
@@ -711,6 +714,9 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (live.isJoint && live.lines && live.lines.length > 0) {
       return new Set(live.lines)
     }
+    if (MULTI_LINE_CATEGORIES[live.category]) {
+      return new Set(MULTI_LINE_CATEGORIES[live.category])
+    }
     if (NEUTRAL_CATEGORIES.has(live.category) && live.line === 'beauty') {
       return new Set(['beauty', 'health'])
     }
@@ -749,12 +755,15 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
 
     // Enforce same-category exclusion
-    const excludedCats = live.isJoint && live.categories
-      ? new Set(live.categories.map((c) => normalizeCategory(c)))
-      : new Set([normalizeCategory(live.category)])
-    if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, seg.category))) {
-      console.warn('Same-category assignment blocked:', live.category, '->', seg.category)
-      return
+    // 数字人/伪直播作为后置承接资源位，允许使用同品类剩余段
+    if (live.type !== 'fake') {
+      const excludedCats = live.isJoint && live.categories
+        ? new Set(live.categories.map((c) => normalizeCategory(c)))
+        : new Set([normalizeCategory(live.category)])
+      if (Array.from(excludedCats).some((cat) => isSameCategoryFamily(cat, seg.category))) {
+        console.warn('Same-category assignment blocked:', live.category, '->', seg.category)
+        return
+      }
     }
 
     // Check conflicts
@@ -938,15 +947,18 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       function getLowWeightLimit(live: LiveStream): { maxSegments: number; maxExposure: number } | null {
+        // 伪直播/数字人后置承接允许最多 3 段，以免 2 个小段卡在 15w 底线以下；总量仍封顶 30w。
+        if (live.type === 'fake') {
+          return { maxSegments: 3, maxExposure: 300000 }
+        }
+        // 其他低权重直播（如非IP的开心太极）仍限1段
         if (isLowWeightLive(live)) return { maxSegments: 1, maxExposure: 200000 }
         return null
       }
 
       // Score and sort lives by weight
       const GRADE_SCORE: Record<string, number> = { S: 100, A: 70, B: 40, C: 20 }
-      const scored = liveStreams.value
-        .filter((live) => live.slot !== 'friend-circle')
-        .map((live) => {
+      const scoreLive = (live: LiveStream) => {
           let score = GRADE_SCORE[live.grade || ''] ?? 10
           if (live.slot === 'evening') score += 50
           else if (live.slot === 'morning') score += 30
@@ -956,19 +968,30 @@ export const useScheduleStore = defineStore('schedule', () => {
 
           // 名师/IP 直播适当加权
           if (live.grade === 'S') score += 10
+          // 联合直播承载多个子直播，本质是更高权重资源位；避免被普通晚间同级直播挤掉核心人群。
+          if (live.isJoint) score += 40
 
           // 数字人 / 录播 / 低权重直播 大幅降权
           if (isLowWeightLive(live)) score -= 120
 
           return { live, score }
-        })
+      }
+      const scored = liveStreams.value
+        .filter((live) => live.slot !== 'friend-circle' && live.type === 'real')
+        .map(scoreLive)
+      const fakeScored = liveStreams.value
+        .filter((live) => live.slot !== 'friend-circle' && live.type === 'fake')
+        .map(scoreLive)
       scored.sort((a, b) => b.score - a.score)
+      fakeScored.sort((a, b) => b.score - a.score)
 
       // Helpers
       function getLiveAllowedLines(live: LiveStream): LineType[] {
         const lines = new Set<LineType>()
         if (live.isJoint && live.lines && live.lines.length > 0) {
           for (const line of live.lines) lines.add(line)
+        } else if (MULTI_LINE_CATEGORIES[live.category]) {
+          for (const line of MULTI_LINE_CATEGORIES[live.category]) lines.add(line)
         } else if (NEUTRAL_CATEGORIES.has(live.category) && live.line === 'beauty') {
           lines.add('beauty')
           lines.add('health')
@@ -984,6 +1007,10 @@ export const useScheduleStore = defineStore('schedule', () => {
       }
 
       function getExcludedCats(live: LiveStream): Set<string> {
+        // 数字人/伪直播作为后置承接资源位，真直播排完后允许吃同品类剩余库存
+        if (live.type === 'fake') {
+          return new Set<string>()
+        }
         const liveCat = normalizeCategory(live.category)
         if (live.isJoint && live.categories && live.categories.length > 0) {
           return new Set(live.categories.map((c) => normalizeCategory(c)))
@@ -1000,14 +1027,29 @@ export const useScheduleStore = defineStore('schedule', () => {
 
       function isSegmentReusable(seg: AudienceSegment, liveDate: string): boolean {
         if (!seg.assignedDates || seg.assignedDates.length === 0) return false
-        const lastAssigned = seg.assignedDates[seg.assignedDates.length - 1]
-        return daysBetween(lastAssigned, liveDate) >= 3
+        if (seg.assignedDates.length >= 2) return false
+        return seg.assignedDates.every((assignedDate) => daysBetween(assignedDate, liveDate) >= 3)
       }
 
       // tryAssign returns the remaining segment if a split occurred, so the
       // caller can push it back into the correct line pool.
-      function tryAssign(live: LiveStream, seg: AudienceSegment, maxCount?: number, allowReuse: boolean = false): AudienceSegment | null {
+      function tryAssign(
+        live: LiveStream,
+        seg: AudienceSegment,
+        maxCount?: number,
+        allowReuse: boolean = false,
+        minSplitRatio: number = 0.3
+      ): AudienceSegment | null {
+        // 硬性 line 合规校验：seg.line 必须在直播允许线内
+        // 这是跨线分配合规性的底层红线，任何入口（autoSchedule / 手动调整 / 审计修复）都必须过此关
+        const allowedLines = Array.from(getAllowedLines(live))
+        if (!allowedLines.includes(seg.line)) {
+          console.warn('[tryAssign] Line violation blocked:', seg.line, '->', live.name, 'allowed:', allowedLines.join('/'))
+          return null
+        }
+
         if (seg.status !== 'available' && !allowReuse) return null
+        const isReusingUsedSegment = allowReuse && seg.status === 'used'
         const maxSegs = MAX_SEGMENTS_BY_GRADE[live.grade || 'C'] ?? 2
         // 段数限制按品类族计数：同族（含等级变体）不额外占用 slot
         const assignedFamilies = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
@@ -1038,10 +1080,11 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         const desiredCount = Math.min(seg.count, maxCount ?? seg.count)
         if (desiredCount <= 0) return null
-        if (desiredCount < seg.count * 0.3) return null
+        if (desiredCount < seg.count * minSplitRatio) return null
 
         let remaining: AudienceSegment | null = null
         if (desiredCount < seg.count) {
+          if (isReusingUsedSegment) return null
           remaining = {
             id: generateId(),
             line: seg.line,
@@ -1055,9 +1098,10 @@ export const useScheduleStore = defineStore('schedule', () => {
           seg.count = desiredCount
         }
 
-        // When allowReuse is true, we are assigning the same segment to a
+        // When allowReuse is true for an already-used segment, we are assigning
+        // the same segment to a
         // second live (daysBetween >= 3). Do NOT remove it from the first live.
-        if (!allowReuse && seg.assignedTo && seg.assignedTo !== live.id) {
+        if (!isReusingUsedSegment && seg.assignedTo && seg.assignedTo !== live.id) {
           const fromLive = liveStreams.value.find((l) => l.id === seg.assignedTo)
           if (fromLive) {
             const idx = fromLive.assignedAudiences.findIndex((a) => a.segmentId === seg.id)
@@ -1081,7 +1125,7 @@ export const useScheduleStore = defineStore('schedule', () => {
         }
         live.assignedAudiences.push(assigned)
         live.exposure += seg.count
-        if (!allowReuse) {
+        if (!isReusingUsedSegment) {
           seg.status = 'used'
           seg.assignedTo = live.id
         }
@@ -1159,7 +1203,12 @@ export const useScheduleStore = defineStore('schedule', () => {
         return { assigned, remaining }
       }
 
-      function pickBest(live: LiveStream, pool: AudienceSegment[], allowReuse: boolean = false): AudienceSegment | null {
+      function pickBest(
+        live: LiveStream,
+        pool: AudienceSegment[],
+        allowReuse: boolean = false,
+        mode: 'normal' | 'floor' = 'normal'
+      ): AudienceSegment | null {
         const excludedCats = getExcludedCats(live)
         // Use category FAMILY for counting so 太极s/A/BCD count as one "太极"
         const assignedCats = new Set(live.assignedAudiences.map((a) => getCategoryFamily(a.category)))
@@ -1200,28 +1249,22 @@ export const useScheduleStore = defineStore('schedule', () => {
 
         if (eligible.length === 0) return null
 
-        // 预估 GMV 辅助函数：优先选择匹配度高的品类，减少小段拼凑
+        // 公海品类选择：主推强度由直播等级决定；具体拿哪个公海品类，
+        // 优先看历史跨科率 × LTV × 人数。直播历史均值只作为缺跨科数据时的兜底。
         const liveCat = normalizeCategory(live.category)
         const liveHist = findHistoricalStat(liveCat)
         function estimateGMV(seg: AudienceSegment): number {
           const audCat = normalizeCategory(seg.category)
-          if (liveHist) {
-            // 有历史数据：按历史 GMV 效率估算
-            return seg.count * (liveHist.avgGMV / Math.max(liveHist.avgExposure, 1))
-          }
-          // 无历史数据：按 crossRate × LTV 估算
           const audCohort = extractCohortMonth(seg.timeRange)
-          let crossRate: number
-          let ltv: number
           if (isSameCategoryFamily(audCat, liveCat)) {
-            crossRate = 1.0
-            ltv = live.ltv || 80
-          } else {
-            const pref = findCrossPref(audCat, liveCat, audCohort)
-            crossRate = pref?.crossRate || 0
-            ltv = pref?.ltv || live.ltv || 80
+            const ltv = liveHist && liveHist.avgFirstOrders > 0 ? liveHist.avgGMV / liveHist.avgFirstOrders : live.ltv || 80
+            return seg.count * ltv
           }
-          return seg.count * crossRate * ltv * gmvMultiplier.value
+          const pref = findCrossPref(audCat, liveCat, audCohort)
+          if (pref) return seg.count * pref.crossRate * pref.ltv
+          if (liveHist) return seg.count * (liveHist.avgGMV / Math.max(liveHist.avgExposure, 1))
+          if (seg.line === live.line) return seg.count * (live.ltv || 80) * COLD_START_SAME_LINE_RATE
+          return 0
         }
 
         eligible.sort((a, b) => {
@@ -1235,22 +1278,34 @@ export const useScheduleStore = defineStore('schedule', () => {
           const bSameFamily = isSameCategoryFamily(b.category, live.category)
           if (aSameFamily !== bSameFamily) return bSameFamily ? 1 : -1
 
-          // 3. Deduplicate assigned categories (强制分散)
-          const aDupCat = assignedCats.has(getCategoryFamily(a.category))
-          const bDupCat = assignedCats.has(getCategoryFamily(b.category))
-          if (aDupCat !== bDupCat) return aDupCat ? 1 : -1
-
-          // 4. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
+          // 3. Avoid duplicate timeRanges (still prefer new timeRanges within same category)
           const aDupRange = assignedRanges.has(a.timeRange)
           const bDupRange = assignedRanges.has(b.timeRange)
           if (aDupRange !== bDupRange) return aDupRange ? 1 : -1
 
-          // 5. Estimated GMV first (预估产值优先，减少小段拼凑)
+          // 4. Floor mode first chooses the segment that gets low-exposure lives
+          // closest to 20w without staying under 15w.
+          if (mode === 'floor') {
+            const floorPenalty = (seg: AudienceSegment) => {
+              const after = live.exposure + seg.count
+              if (after < MIN_ACCEPTABLE_EXPOSURE) return 1000000 + (MIN_ACCEPTABLE_EXPOSURE - after)
+              return Math.abs(after - PREFERRED_MIN_EXPOSURE)
+            }
+            const floorDiff = floorPenalty(a) - floorPenalty(b)
+            if (floorDiff !== 0) return floorDiff
+          }
+
+          // 5. Cross-rate × LTV value first (公海品类价值优先)
           const aGMV = estimateGMV(a)
           const bGMV = estimateGMV(b)
           if (bGMV !== aGMV) return bGMV - aGMV
 
-          // 6. Large count first (大数量段优先)
+          // 6. Deduplicate assigned categories (分散作为价值之后的约束)
+          const aDupCat = assignedCats.has(getCategoryFamily(a.category))
+          const bDupCat = assignedCats.has(getCategoryFamily(b.category))
+          if (aDupCat !== bDupCat) return aDupCat ? 1 : -1
+
+          // 7. Large count first (大数量段兜底)
           if (b.count !== a.count) return b.count - a.count
 
           return 0
@@ -1294,11 +1349,13 @@ export const useScheduleStore = defineStore('schedule', () => {
             if (live.exposure >= target && !live.isJoint) continue
             const allowedLines = getLiveAllowedLines(live)
             const primaryLine = live.line as LineType
-            // 联合直播始终以主品类线级（live.line）为第一优先，
-            // 当前 group line 仅作为 fallback，避免 beauty 主导直播在 health group 中被 health 线挤占
-            const linesToTry = allowedLines.includes(primaryLine)
-              ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
-              : allowedLines
+            // 联合/跨线直播在当前线级轮询中优先当前 line，确保涉及的
+            // health/beauty/interest 都能实际拿到人群，而不是永远被主品类线吸走。
+            const linesToTry = live.isJoint && allowedLines.includes(line)
+              ? [line, ...allowedLines.filter((l) => l !== line)]
+              : allowedLines.includes(primaryLine)
+                ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+                : allowedLines
             for (const tryLine of linesToTry) {
               const best = pickBest(live, linePools[tryLine])
               if (best) {
@@ -1424,6 +1481,109 @@ export const useScheduleStore = defineStore('schedule', () => {
               break
             }
           }
+        }
+      }
+
+      // Round 4: 底线带补齐。真直播低于 20w 时，优先补到接近 20w；
+      // 可使用同一 audience 段的第二次触达，但必须间隔 >=3 天且全周最多 2 次。
+      const underFloorLives = scored
+        .filter(({ live }) => live.type === 'real' && live.slot !== 'friend-circle' && live.exposure > 0 && live.exposure < PREFERRED_MIN_EXPOSURE)
+        .sort((a, b) => a.live.exposure - b.live.exposure || b.score - a.score)
+
+      for (const { live } of underFloorLives) {
+        let attempts = 0
+        while (live.exposure < PREFERRED_MIN_EXPOSURE && attempts < 5) {
+          attempts++
+          let assigned = false
+          const allowedLines = getLiveAllowedLines(live)
+          const primaryLine = live.line as LineType
+          const linesToTry = allowedLines.includes(primaryLine)
+            ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+            : allowedLines
+
+          for (const line of linesToTry) {
+            const floorPool = audienceSegments.value.filter((seg) => seg.line === line)
+            const best = pickBest(live, floorPool, true, 'floor')
+            if (!best) continue
+
+            const preferredRemaining = Math.max(0, PREFERRED_MIN_EXPOSURE - live.exposure)
+            const maxCount =
+              best.status === 'available' && preferredRemaining >= best.count * 0.1
+                ? preferredRemaining
+                : undefined
+            const beforeCount = live.assignedAudiences.length
+            const remaining = tryAssign(live, best, maxCount, true, 0.1)
+            if (remaining) {
+              linePools[remaining.line].push(remaining)
+            }
+            if (live.assignedAudiences.length > beforeCount) {
+              assigned = true
+              break
+            }
+          }
+          if (!assigned) break
+        }
+      }
+
+      // Round 5: 伪直播补充承接。只在真直播主资源和底线补齐完成后，
+      // 使用本线剩余 available 段，或本线已用但可复用段（间隔>=3天）。
+      // 严禁跨线兜底：库存不足时宁可不排，也不能违反跨线合规。
+      const FAKE_SUPPLEMENT_TARGET = 300000
+      for (const { live } of fakeScored) {
+        let attempts = 0
+        while (live.exposure < FAKE_SUPPLEMENT_TARGET && attempts < 5) {
+          attempts++
+          let assigned = false
+          const allowedLines = getLiveAllowedLines(live)
+          const primaryLine = live.line as LineType
+          const linesToTry = allowedLines.includes(primaryLine)
+            ? [primaryLine, ...allowedLines.filter((l) => l !== primaryLine)]
+            : allowedLines
+
+          // 第一步：本线 unused 段
+          for (const line of linesToTry) {
+            const best = pickBest(live, linePools[line], false, 'floor')
+            if (!best) continue
+
+            const maxCount = Math.max(0, FAKE_SUPPLEMENT_TARGET - live.exposure)
+            const beforeCount = live.assignedAudiences.length
+            const remaining = tryAssign(live, best, maxCount, false, 0.1)
+            if (live.assignedAudiences.length === beforeCount) {
+              continue
+            }
+            const idx = linePools[line].indexOf(best)
+            if (idx !== -1) linePools[line].splice(idx, 1)
+            if (remaining) {
+              linePools[remaining.line].push(remaining)
+            }
+            assigned = true
+            break
+          }
+
+          // 第二步：本线已用但可复用段（间隔>=3天，周不超过2次）
+          if (!assigned) {
+            for (const line of linesToTry) {
+              const reusablePool = audienceSegments.value.filter(
+                (seg) => seg.line === line && seg.status === 'used' && isSegmentReusable(seg, live.date),
+              )
+              const best = pickBest(live, reusablePool, true, 'floor')
+              if (!best) continue
+
+              const maxCount = Math.max(0, FAKE_SUPPLEMENT_TARGET - live.exposure)
+              const beforeCount = live.assignedAudiences.length
+              const remaining = tryAssign(live, best, maxCount, true, 0.1)
+              if (live.assignedAudiences.length === beforeCount) {
+                continue
+              }
+              if (remaining) {
+                linePools[remaining.line].push(remaining)
+              }
+              assigned = true
+              break
+            }
+          }
+
+          if (!assigned) break
         }
       }
 

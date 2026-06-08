@@ -4,6 +4,8 @@ import { useScheduleStore } from '@/stores/schedule'
 import UploadModal from './UploadModal.vue'
 import CategoryManager from './CategoryManager.vue'
 import AttributionPanel from './AttributionPanel.vue'
+import RuleAuditPanel from './RuleAuditPanel.vue'
+import RuleLibraryView from './RuleLibraryView.vue'
 import { exportSchedule } from '@/utils/exporter'
 import FeishuSyncModal from './FeishuSyncModal.vue'
 
@@ -12,6 +14,8 @@ const showModal = ref(false)
 const showCategoryManager = ref(false)
 const showAttribution = ref(false)
 const showFeishuSync = ref(false)
+const showRuleAudit = ref(false)
+const showRuleLibrary = ref(false)
 
 async function handleAutoSchedule() {
   await store.autoSchedule()
@@ -56,6 +60,18 @@ function onModalDone() {
 
     <!-- Right: Actions -->
     <div class="flex items-center gap-3">
+      <button
+        class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors"
+        @click="showRuleAudit = true"
+      >
+        <span>&#128269;</span> 规则审计
+      </button>
+      <button
+        class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors"
+        @click="showRuleLibrary = true"
+      >
+        <span>&#128214;</span> 规则库
+      </button>
       <button
         class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors"
         @click="showCategoryManager = true"
@@ -111,5 +127,14 @@ function onModalDone() {
   <FeishuSyncModal
     :open="showFeishuSync"
     @close="showFeishuSync = false"
+  />
+  <RuleAuditPanel
+    :open="showRuleAudit"
+    @close="showRuleAudit = false"
+    @open-category-manager="showCategoryManager = true"
+  />
+  <RuleLibraryView
+    :open="showRuleLibrary"
+    @close="showRuleLibrary = false"
   />
 </template>
