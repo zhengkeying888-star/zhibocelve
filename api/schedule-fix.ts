@@ -1,5 +1,5 @@
 // Vercel Edge Function: AI 排期诊断与修复建议
-// 支持 Kimi (Moonshot) / Anthropic 双平台，根据 API Key 前缀自动识别
+// 支持 Anthropic / Kimi / OpenAI / 自定义代理，通过环境变量显式配置
 
 export const config = {
   runtime: 'edge',
@@ -54,16 +54,30 @@ interface ScheduleState {
   weekDays: any[]
 }
 
-type ApiProvider = 'anthropic' | 'kimi'
+type ApiProvider = 'anthropic' | 'kimi' | 'openai' | 'custom'
 
-function detectProvider(apiKey: string): ApiProvider {
-  if (apiKey.startsWith('sk-kimi')) return 'kimi'
-  if (apiKey.startsWith('sk-ant')) return 'anthropic'
-  // 默认按 Anthropic 处理（兼容旧 key）
-  return 'anthropic'
+function getProvider(): ApiProvider {
+  const p = (process.env.LLM_PROVIDER || 'kimi').toLowerCase()
+  if (['anthropic', 'kimi', 'openai', 'custom'].includes(p)) return p as ApiProvider
+  return 'kimi'
 }
 
-async function callAnthropic(apiKey: string, compactState: any) {
+function getModel(provider: ApiProvider): string {
+  return (
+    process.env.LLM_MODEL ||
+    (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'kimi-k2.6')
+  )
+}
+
+function getBaseUrl(provider: ApiProvider): string {
+  if (process.env.LLM_BASE_URL) return process.env.LLM_BASE_URL
+  if (provider === 'anthropic') return 'https://api.anthropic.com/v1'
+  if (provider === 'kimi') return 'https://api.moonshot.cn/v1'
+  if (provider === 'openai') return 'https://api.openai.com/v1'
+  throw new Error('LLM_BASE_URL required for custom provider')
+}
+
+async function callAnthropic(apiKey: string, model: string, compactState: any) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -72,7 +86,7 @@ async function callAnthropic(apiKey: string, compactState: any) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       messages: [
@@ -97,15 +111,21 @@ async function callAnthropic(apiKey: string, compactState: any) {
   }
 }
 
-async function callKimi(apiKey: string, compactState: any) {
-  const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+async function callOpenAICompatible(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  compactState: any
+) {
+  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'kimi-k2.6',
+      model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {
@@ -119,7 +139,7 @@ async function callKimi(apiKey: string, compactState: any) {
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Kimi API error ${response.status}: ${errorText}`)
+    throw new Error(`LLM API error ${response.status}: ${errorText}`)
   }
 
   const data = await response.json()
@@ -131,7 +151,6 @@ async function callKimi(apiKey: string, compactState: any) {
 }
 
 export default async function handler(req: Request): Promise<Response> {
-  // CORS
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
@@ -155,17 +174,22 @@ export default async function handler(req: Request): Promise<Response> {
   try {
     const body: ScheduleState = await req.json()
     const compactState = compactScheduleState(body)
-    const provider = detectProvider(apiKey)
+    const provider = getProvider()
+    const model = getModel(provider)
 
-    const result = provider === 'kimi'
-      ? await callKimi(apiKey, compactState)
-      : await callAnthropic(apiKey, compactState)
+    let result
+    if (provider === 'anthropic') {
+      result = await callAnthropic(apiKey, model, compactState)
+    } else {
+      const baseUrl = getBaseUrl(provider)
+      result = await callOpenAICompatible(baseUrl, apiKey, model, compactState)
+    }
 
-    // 尝试从回复中提取 JSON
     let suggestions = null
     try {
-      const jsonMatch = result.content.match(/```json\n([\s\S]*?)\n```/) ||
-                        result.content.match(/\{[\s\S]*\}/)
+      const jsonMatch =
+        result.content.match(/```json\n([\s\S]*?)\n```/) ||
+        result.content.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         suggestions = JSON.parse(jsonMatch[1] || jsonMatch[0])
       }
@@ -179,6 +203,7 @@ export default async function handler(req: Request): Promise<Response> {
       model: result.model,
       usage: result.usage,
       provider,
+      modelUsed: model,
     })
   } catch (err: any) {
     console.error('Edge function error:', err)
@@ -196,7 +221,6 @@ function jsonResponse(data: any, status = 200): Response {
   })
 }
 
-// 精简排期状态，只保留诊断所需的字段，减少 API token
 function compactScheduleState(state: ScheduleState) {
   const lives = (state.liveStreams || []).map((l) => ({
     id: l.id,
