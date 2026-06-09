@@ -1605,7 +1605,7 @@ export const useScheduleStore = defineStore('schedule', () => {
               const best = pickBest(live, reusablePool, true, 'floor')
               if (!best) continue
 
-              const maxCount = Math.max(0, FAKE_SUPPLEMENT_TARGET - live.exposure)
+              const maxCount = Math.max(0, fakeTarget - live.exposure)
               const beforeCount = live.assignedAudiences.length
               const remaining = tryAssign(live, best, maxCount, true, 0.1)
               if (live.assignedAudiences.length === beforeCount) {
