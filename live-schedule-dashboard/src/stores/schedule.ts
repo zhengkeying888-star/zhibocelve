@@ -77,6 +77,11 @@ export const useScheduleStore = defineStore('schedule', () => {
   // Feishu integration config
   const feishuConfig = ref<FeishuConfig | null>(null)
 
+  // AI Fix Panel state
+  const aiFixSuggestions = ref<any | null>(null)
+  const isAiFixLoading = ref(false)
+  const aiFixError = ref<string | null>(null)
+
   // Global calibration multiplier (temporary fix for crossRate underestimation)
   const gmvMultiplier = ref(18)
 
@@ -1642,6 +1647,65 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
   }
 
+  // ========== AI Fix ==========
+  async function fetchAiFixSuggestions() {
+    isAiFixLoading.value = true
+    aiFixError.value = null
+    try {
+      const response = await fetch('/api/schedule-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          liveStreams: liveStreams.value,
+          audienceSegments: audienceSegments.value,
+          auditReport: {},
+          weekDays: weekDays.value,
+        }),
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${response.status}`)
+      }
+      const data = await response.json()
+      aiFixSuggestions.value = data
+    } catch (err: any) {
+      aiFixError.value = err.message || 'AI 分析失败'
+      console.error('[AiFix]', err)
+    } finally {
+      isAiFixLoading.value = false
+    }
+  }
+
+  function clearAiFix() {
+    aiFixSuggestions.value = null
+    aiFixError.value = null
+  }
+
+  function applyAiFixSuggestion(suggestion: any) {
+    console.log('[AiFix] Apply suggestion:', suggestion)
+    if (suggestion.type === 'transfer' && suggestion.fromLiveId && suggestion.toLiveId && suggestion.segmentId) {
+      const fromLive = liveStreams.value.find((l) => l.id === suggestion.fromLiveId)
+      const toLive = liveStreams.value.find((l) => l.id === suggestion.toLiveId)
+      const seg = audienceSegments.value.find((s) => s.id === suggestion.segmentId)
+      if (fromLive && toLive && seg) {
+        // Remove from source
+        const idx = fromLive.assignedAudiences.findIndex((a) => a.segmentId === suggestion.segmentId)
+        if (idx !== -1) {
+          const count = fromLive.assignedAudiences[idx].count
+          fromLive.exposure -= count
+          fromLive.assignedAudiences.splice(idx, 1)
+          if (seg.assignedDates) {
+            seg.assignedDates = seg.assignedDates.filter((d) => d !== fromLive.date)
+          }
+        }
+        // Add to target
+        assignAudience(toLive.id, suggestion.segmentId)
+        // Save state
+        saveScheduleState(serializeState())
+      }
+    }
+  }
+
   function loadMockData() {
     // Mock live streams
     const lines: LineType[] = ['health', 'beauty', 'interest']
@@ -1881,5 +1945,11 @@ export const useScheduleStore = defineStore('schedule', () => {
     pendingAdjustment,
     pauseCloudSync,
     resumeCloudSync,
+    aiFixSuggestions,
+    isAiFixLoading,
+    aiFixError,
+    fetchAiFixSuggestions,
+    clearAiFix,
+    applyAiFixSuggestion,
   }
 })

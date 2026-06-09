@@ -8,6 +8,7 @@ import RuleAuditPanel from './RuleAuditPanel.vue'
 import RuleLibraryView from './RuleLibraryView.vue'
 import { exportSchedule } from '@/utils/exporter'
 import FeishuSyncModal from './FeishuSyncModal.vue'
+import AiFixPanel from './AiFixPanel.vue'
 
 const store = useScheduleStore()
 const showModal = ref(false)
@@ -16,6 +17,7 @@ const showAttribution = ref(false)
 const showFeishuSync = ref(false)
 const showRuleAudit = ref(false)
 const showRuleLibrary = ref(false)
+const showAiFix = ref(false)
 
 async function handleAutoSchedule() {
   await store.autoSchedule()
@@ -60,6 +62,12 @@ function onModalDone() {
 
     <!-- Right: Actions -->
     <div class="flex items-center gap-3">
+      <button
+        class="text-sm text-slate-500 hover:text-blue-600 flex items-center gap-1 px-2 py-1.5 transition-colors"
+        @click="showAiFix = true"
+      >
+        <span>&#129302;</span> AI诊断
+      </button>
       <button
         class="text-sm text-slate-500 hover:text-slate-900 flex items-center gap-1 px-2 py-1.5 transition-colors"
         @click="showRuleAudit = true"
@@ -137,4 +145,5 @@ function onModalDone() {
     :open="showRuleLibrary"
     @close="showRuleLibrary = false"
   />
+  <AiFixPanel v-if="showAiFix" @close="showAiFix = false" />
 </template>
