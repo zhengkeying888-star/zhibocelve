@@ -49,6 +49,8 @@ export function validateSchedule(
     const allowedLines: LineType[] =
       live.isJoint && live.lines && live.lines.length > 0
         ? live.lines
+        : live.category === '茶道'
+          ? ['interest', 'health']
         : (live.category === '一杰瑜伽' || live.category === '东方养正瑜伽') && live.line === 'beauty'
           ? ['beauty', 'health']
           : [live.line]
@@ -64,6 +66,8 @@ export function validateSchedule(
 
   // 3. Same-category exclusion check
   for (const live of lives) {
+    // 伪直播/数字人是后置承接位，允许使用真直播排完后的同品类剩余段或合规复用段。
+    if (live.type === 'fake') continue
     for (const aud of live.assignedAudiences) {
       if (isSameCategoryFamily(live.category, aud.category)) {
         stats.sameCategoryViolations++
@@ -123,8 +127,15 @@ export function validateSchedule(
 
   // 7. Target achievement check (warning level) — PRD v2.0 targets
   const targets: Record<string, number> = { S: 600000, A: 500000, B: 350000, C: 250000 }
+  const minAcceptableExposure = 150000
+  const preferredMinExposure = 200000
   for (const live of lives) {
     if (live.slot === 'friend-circle') continue
+    if (live.type === 'real' && live.exposure > 0 && live.exposure < minAcceptableExposure) {
+      warnings.push(
+        `[EXPOSURE_FLOOR] ${live.name} exposure=${live.exposure}，低于真直播底线 ${minAcceptableExposure}（建议接近 ${preferredMinExposure}）`
+      )
+    }
     const target = live.target ?? targets[live.grade || 'C'] ?? 120000
     if (live.exposure < target) {
       warnings.push(

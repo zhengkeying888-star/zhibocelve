@@ -148,6 +148,7 @@ const LIVE_NAME_TO_GRADE: Record<string, 'S' | 'A' | 'B' | 'C'> = {
   '2025.5.16健康营养': 'S',
   '国际声乐': 'S',
   '摄影美学': 'S',
+  '风光摄影': 'S',
   // 用户 2026-05-17 明确指定（不准改动）
   '一杰瑜伽晨练+五禽戏': 'A',
   '普拉提晨练+一杰瑜伽晨练': 'A',
@@ -197,6 +198,12 @@ function inferCategory(name: string): string {
     '2026.4.2唐一杰': '一杰瑜伽',
     '一杰瑜伽': '一杰瑜伽',
     '东方养正瑜伽': '东方养正瑜伽',
+    '风光摄影': '风光摄影',
+    '相机摄影': '相机摄影',
+    '国际声乐': '国际声乐',
+    '健康膳食': '健康膳食',
+    '居家古法': '居家古法养生',
+    '居家古法养生': '居家古法养生',
   }
   const directMap = LIVE_NAME_TO_CATEGORY[name.trim()]
   if (directMap) return directMap
@@ -228,11 +235,13 @@ function inferCategory(name: string): string {
   if (s.includes('中医') || s.includes('变美')) return '中医变美'
   if (s.includes('普拉提')) return '普拉提'
   if (s.includes('瑜伽')) return '瑜伽'
+  if (s.includes('相机')) return '相机摄影'
   if (s.includes('摄影')) return '手机摄影'
   if (s.includes('唱歌')) return '唱歌'
   if (s.includes('短视频')) return '短视频'
   if (s.includes('朗诵')) return '国学朗诵'
   if (s.includes('茶道')) return '茶道'
+  if (s.includes('国际声乐')) return '国际声乐'
   if (s.includes('编织') || s.includes('钩针')) return '编织工艺美学'
   if (s.includes('穿搭')) return '穿搭'
   if (s.includes('国画')) return '国画1'
@@ -245,6 +254,7 @@ function inferCategory(name: string): string {
   if (s.includes('易筋经')) return '易筋经'
   if (s.includes('气血')) return '气血调理'
   if (s.includes('固气')) return '固气活血'
+  if (s.includes('居家古法')) return '居家古法养生'
   if (s.includes('养生')) return '古法居家养生'
   if (s.includes('食养')) return '健康食养'
   if (s.includes('营养')) return '营养调理'
@@ -303,11 +313,17 @@ function isBlockHeaderRow(col0: string): boolean {
     col0.includes('早间') ||
     col0.includes('晚IP') ||
     col0.includes('晚上') ||
+    col0.includes('数字人') ||
+    col0.includes('事业部') ||
     col0.includes('朋友圈') ||
     col0.includes('视频号') ||
     col0.includes('伪直播') ||
     col0.includes('复用')
   )
+}
+
+function isLiveFormResourceMarker(col0: string): boolean {
+  return col0 === '数字人' || col0.includes('录播')
 }
 
 function isMetadataRow(c0: string, c1: string): boolean {
@@ -410,6 +426,13 @@ function extractFakeHistoryFromCell(lines: string[], defaultLine: LineType = 'in
 function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): LiveStream[] {
   const rawLines = merged.split('\n').map(l => l.trim()).filter(Boolean)
   if (rawLines.length === 0) return []
+
+  const hasFakeReuseMarker = rawLines.some((line) => line.includes('伪直播复用') || line.includes('【伪直播复用】'))
+  const outputSlot: SlotType = hasFakeReuseMarker
+    ? (slot.includes('morning') ? 'fake-morning' : 'fake-evening')
+    : slot
+  const getLiveType = (name: string): 'real' | 'fake' =>
+    hasFakeReuseMarker || outputSlot.startsWith('fake-') || isFakeLive(name, outputSlot) ? 'fake' : 'real'
 
   const { remainingLines: lines, fakeAudiences } = extractFakeHistoryFromCell(rawLines)
 
@@ -517,8 +540,8 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     const primaryLine = linesList[0]
     const uniqueLines = Array.from(new Set(linesList)) as LineType[]
 
-    const startTime = timeMatches.length > 0 ? timeMatches[0].start : (slot.includes('morning') ? '07:30' : '19:00')
-    const endTime = timeMatches.length > 0 ? timeMatches[timeMatches.length - 1].end : (slot.includes('morning') ? '10:00' : '21:00')
+    const startTime = timeMatches.length > 0 ? timeMatches[0].start : (outputSlot.includes('morning') ? '07:30' : '19:00')
+    const endTime = timeMatches.length > 0 ? timeMatches[timeMatches.length - 1].end : (outputSlot.includes('morning') ? '10:00' : '21:00')
 
     let link = ''
     for (const line of lines) {
@@ -533,12 +556,12 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       startTime,
       endTime,
       date: day.date,
-      type: isFakeLive(liveNames.join(' + '), slot) ? 'fake' : 'real',
+      type: getLiveType(liveNames.join(' + ')),
       category: primaryCategory,
       categories,
       line: primaryLine,
       lines: uniqueLines,
-      slot,
+      slot: outputSlot,
       grade: null,
       owner: '',
       link,
@@ -595,10 +618,10 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
         startTime,
         endTime,
         date: day.date,
-        type: isFakeLive(name, slot) ? 'fake' : 'real',
+        type: getLiveType(name),
         category: inferCategory(name),
         line: lineType,
-        slot,
+        slot: outputSlot,
         grade: null,
         owner: '',
         link,
@@ -659,13 +682,13 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
       results.push({
         id: generateId(),
         name,
-        startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
-        endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+        startTime: startTime || (outputSlot.includes('morning') ? '07:30' : '19:00'),
+        endTime: endTime || (outputSlot.includes('morning') ? '09:00' : '21:00'),
         date: day.date,
-        type: isFakeLive(name, slot) ? 'fake' : 'real',
+        type: getLiveType(name),
         category: inferredCategory,
         line: lineType,
-        slot,
+        slot: outputSlot,
         grade: null,
         owner: '',
         link,
@@ -725,13 +748,13 @@ function parseMergedLiveCell(merged: string, day: WeekDay, slot: SlotType): Live
     results.push({
       id: generateId(),
       name,
-      startTime: startTime || (slot.includes('morning') ? '07:30' : '19:00'),
-      endTime: endTime || (slot.includes('morning') ? '09:00' : '21:00'),
+      startTime: startTime || (outputSlot.includes('morning') ? '07:30' : '19:00'),
+      endTime: endTime || (outputSlot.includes('morning') ? '09:00' : '21:00'),
       date: day.date,
-      type: isFakeLive(name, slot) ? 'fake' : 'real',
+      type: getLiveType(name),
       category: inferredCategory,
       line: lineType,
-      slot,
+      slot: outputSlot,
       grade: null,
       owner: '',
       link,
@@ -1411,8 +1434,12 @@ function parseScheduleJson(json: any[][], sheetName?: string, fileName?: string)
     for (let col = startCol; col <= 8; col++) {
       const lines: string[] = []
       for (const lr of liveInfoRows) {
+        const resourceMarker = normCell(lr[0])
         const cell = normCell(lr[col])
-        if (cell) lines.push(cell)
+        if (cell) {
+          lines.push(cell)
+          if (isLiveFormResourceMarker(resourceMarker)) lines.push(resourceMarker)
+        }
       }
       if (lines.length === 0) continue
 

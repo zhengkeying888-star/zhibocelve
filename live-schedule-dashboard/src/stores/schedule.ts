@@ -1502,20 +1502,48 @@ export const useScheduleStore = defineStore('schedule', () => {
             : allowedLines
 
           for (const line of linesToTry) {
-            const floorPool = audienceSegments.value.filter((seg) => seg.line === line)
-            const best = pickBest(live, floorPool, true, 'floor')
-            if (!best) continue
-
-            const preferredRemaining = Math.max(0, PREFERRED_MIN_EXPOSURE - live.exposure)
-            const maxCount =
-              best.status === 'available' && preferredRemaining >= best.count * 0.1
-                ? preferredRemaining
-                : undefined
+            // 修复1：Round 4 优先只用 available unused 段，复用段仅作兜底
             const beforeCount = live.assignedAudiences.length
-            const remaining = tryAssign(live, best, maxCount, true, 0.1)
-            if (remaining) {
-              linePools[remaining.line].push(remaining)
+
+            // Step A：先尝试 available unused 段
+            const availablePool = audienceSegments.value.filter(
+              (seg) => seg.line === line && seg.status === 'available' && isSegmentUnused(seg)
+            )
+            const bestAvailable = pickBest(live, availablePool, false, 'floor')
+            if (bestAvailable) {
+              const preferredRemaining = Math.max(0, PREFERRED_MIN_EXPOSURE - live.exposure)
+              const maxCount =
+                bestAvailable.status === 'available' && preferredRemaining >= bestAvailable.count * 0.1
+                  ? preferredRemaining
+                  : undefined
+              const remaining = tryAssign(live, bestAvailable, maxCount, false, 0.1)
+              if (remaining) {
+                linePools[remaining.line].push(remaining)
+              }
             }
+
+            // Step B：available 尝试真正失败（段数没增加）时，才允许复用
+            if (live.assignedAudiences.length === beforeCount) {
+              const reusablePool = audienceSegments.value.filter(
+                (seg) =>
+                  seg.line === line &&
+                  ((seg.status === 'available' && isSegmentUnused(seg)) ||
+                    (seg.status === 'used' && isSegmentReusable(seg, live.date)))
+              )
+              const bestReusable = pickBest(live, reusablePool, true, 'floor')
+              if (bestReusable) {
+                const preferredRemaining = Math.max(0, PREFERRED_MIN_EXPOSURE - live.exposure)
+                const maxCount =
+                  bestReusable.status === 'available' && preferredRemaining >= bestReusable.count * 0.1
+                    ? preferredRemaining
+                    : undefined
+                const remaining = tryAssign(live, bestReusable, maxCount, true, 0.1)
+                if (remaining) {
+                  linePools[remaining.line].push(remaining)
+                }
+              }
+            }
+
             if (live.assignedAudiences.length > beforeCount) {
               assigned = true
               break
@@ -1528,10 +1556,13 @@ export const useScheduleStore = defineStore('schedule', () => {
       // Round 5: 伪直播补充承接。只在真直播主资源和底线补齐完成后，
       // 使用本线剩余 available 段，或本线已用但可复用段（间隔>=3天）。
       // 严禁跨线兜底：库存不足时宁可不排，也不能违反跨线合规。
-      const FAKE_SUPPLEMENT_TARGET = 300000
       for (const { live } of fakeScored) {
+        // 修复2：数字人固定时间、目标 150k；普通伪直播可到 200k，在 while 外算好不动
+        const fakeTarget = live.name.includes('数字人')
+          ? MIN_ACCEPTABLE_EXPOSURE
+          : PREFERRED_MIN_EXPOSURE
         let attempts = 0
-        while (live.exposure < FAKE_SUPPLEMENT_TARGET && attempts < 5) {
+        while (live.exposure < fakeTarget && attempts < 8) {
           attempts++
           let assigned = false
           const allowedLines = getLiveAllowedLines(live)
@@ -1545,7 +1576,7 @@ export const useScheduleStore = defineStore('schedule', () => {
             const best = pickBest(live, linePools[line], false, 'floor')
             if (!best) continue
 
-            const maxCount = Math.max(0, FAKE_SUPPLEMENT_TARGET - live.exposure)
+            const maxCount = Math.max(0, fakeTarget - live.exposure)
             const beforeCount = live.assignedAudiences.length
             const remaining = tryAssign(live, best, maxCount, false, 0.1)
             if (live.assignedAudiences.length === beforeCount) {

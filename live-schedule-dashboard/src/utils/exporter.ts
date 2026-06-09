@@ -1,59 +1,59 @@
 import * as XLSX from 'xlsx'
 import type { LiveStream, WeekDay, AssignedAudience } from '@/types'
 
-function parseDateFromString(s: string): Date | null {
-  const m = s.match(/(\d{4})[年.]?(\d{1,2})[月.]?(\d{1,2})?[日]?/)
-  if (!m) return null
-  const year = parseInt(m[1], 10)
-  const month = parseInt(m[2], 10) - 1
-  const day = m[3] ? parseInt(m[3], 10) : 1
-  return new Date(year, month, day)
+export interface MergedAudience {
+  category: string
+  timeRange: string
+  count: number
+  grouped?: boolean
 }
 
-function formatMergedDate(d: Date): string {
-  const year = d.getFullYear()
-  const month = d.getMonth() + 1
-  const day = d.getDate()
-  if (day === 1) return `${year}年${month}月`
-  return `${year}年${month}月${day}日`
-}
-
-function mergeTimeRanges(ranges: string[]): string {
-  let minDate: Date | null = null
-  let maxDate: Date | null = null
-  for (const range of ranges) {
-    const parts = range.split(/[-~—]/)
-    if (parts.length < 2) continue
-    const start = parseDateFromString(parts[0].trim())
-    const end = parseDateFromString(parts[parts.length - 1].trim())
-    if (start && (!minDate || start < minDate)) minDate = start
-    if (end && (!maxDate || end > maxDate)) maxDate = end
-  }
-  if (minDate && maxDate) {
-    return `${formatMergedDate(minDate)}—${formatMergedDate(maxDate)}`
-  }
-  return ranges.join(' / ')
-}
-
-export function mergeAudiences(items: AssignedAudience[]): { category: string; timeRange: string; count: number }[] {
-  const map = new Map<string, { category: string; timeRanges: string[]; count: number }>()
+export function mergeAudiences(items: AssignedAudience[]): MergedAudience[] {
+  const exactMap = new Map<string, { category: string; timeRange: string; count: number; order: number }>()
   for (const item of items) {
-    const key = item.category
-    const existing = map.get(key)
+    const key = `${item.timeRange}||${item.category}`
+    const existing = exactMap.get(key)
     if (existing) {
       existing.count += item.count
-      if (!existing.timeRanges.includes(item.timeRange)) {
-        existing.timeRanges.push(item.timeRange)
-      }
     } else {
-      map.set(key, { category: item.category, timeRanges: [item.timeRange], count: item.count })
+      exactMap.set(key, {
+        category: item.category,
+        timeRange: item.timeRange,
+        count: item.count,
+        order: exactMap.size,
+      })
     }
   }
-  return Array.from(map.values()).map(({ category, timeRanges, count }) => ({
-    category,
-    timeRange: mergeTimeRanges(timeRanges),
-    count,
-  }))
+
+  const rangeMap = new Map<string, { timeRange: string; items: { category: string; count: number; order: number }[]; order: number }>()
+  for (const item of exactMap.values()) {
+    const existing = rangeMap.get(item.timeRange)
+    if (existing) {
+      existing.items.push({ category: item.category, count: item.count, order: item.order })
+    } else {
+      rangeMap.set(item.timeRange, {
+        timeRange: item.timeRange,
+        items: [{ category: item.category, count: item.count, order: item.order }],
+        order: item.order,
+      })
+    }
+  }
+
+  return Array.from(rangeMap.values())
+    .sort((a, b) => a.order - b.order)
+    .map(({ timeRange, items }) => {
+      const sortedItems = items.sort((a, b) => a.order - b.order)
+      const count = sortedItems.reduce((sum, item) => sum + item.count, 0)
+      if (sortedItems.length === 1) {
+        return { category: sortedItems[0].category, timeRange, count }
+      }
+      return {
+        category: sortedItems.map((item) => `${item.category}（${item.count.toLocaleString()}）`).join('、'),
+        timeRange,
+        count,
+        grouped: true,
+      }
+    })
 }
 
 function formatAudience(live: LiveStream, line: string): string {
@@ -61,7 +61,7 @@ function formatAudience(live: LiveStream, line: string): string {
   if (items.length === 0) return ''
   const merged = mergeAudiences(items)
   return merged
-    .map((a) => `【存量】${a.timeRange} ${a.category}（${a.count.toLocaleString()}）`)
+    .map((a) => `【存量】${a.timeRange} ${a.grouped ? a.category : `${a.category}（${a.count.toLocaleString()}）`}`)
     .join('\n')
 }
 

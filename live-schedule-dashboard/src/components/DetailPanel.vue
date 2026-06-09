@@ -251,7 +251,7 @@ function formatGMV(n: number): string {
             </div>
             <div
               v-for="aud in getMergedAudienceByLine(line)"
-              :key="aud.category"
+              :key="`${aud.category}-${aud.timeRange}`"
               class="p-2 border rounded hover:border-slate-300 mb-1"
               :class="selectedLive.conflictReasons.some(r => r.includes(aud.category)) ? 'bg-red-50/30 border-red-200' : 'border-slate-200'"
             >

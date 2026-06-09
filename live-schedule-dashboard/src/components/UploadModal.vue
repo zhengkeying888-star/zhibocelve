@@ -207,6 +207,8 @@ async function handleSubmit() {
             // Apply historical mappings so user doesn't have to re-categorize every week
             store.applyNameOverrides()
             store.applyCategoryGrades()
+          } else {
+            throw new Error('未从该文件中识别出排期矩阵。请确认上传的是包含"星期/日期/早间/晚IP"结构的排期表，而非 audience 量级表。')
           }
           if (result.audienceSegments.length > 0) {
             store.setAudienceSegments(result.audienceSegments)
