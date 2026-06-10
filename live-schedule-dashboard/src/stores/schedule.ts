@@ -1647,33 +1647,141 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
   }
 
-  // ========== AI Fix ==========
+  // ========== AI Fix (Diagnostic Report Export) ==========
   async function fetchAiFixSuggestions() {
     isAiFixLoading.value = true
     aiFixError.value = null
     try {
-      const response = await fetch('/api/schedule-fix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          liveStreams: liveStreams.value,
-          audienceSegments: audienceSegments.value,
-          auditReport: {},
-          weekDays: weekDays.value,
-        }),
-      })
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}))
-        throw new Error(err.error || `HTTP ${response.status}`)
+      const report = generateDiagnosticReport()
+      aiFixSuggestions.value = {
+        rootCause: '已生成本地诊断报告，请复制后粘贴到 Claude Code 对话中分析',
+        confidence: 1,
+        suggestions: [],
+        healthLineAnalysis: null,
+        raw: report,
+        provider: 'local-report',
+        modelUsed: 'diagnostic-report',
       }
-      const data = await response.json()
-      aiFixSuggestions.value = data
     } catch (err: any) {
-      aiFixError.value = err.message || 'AI 分析失败'
+      aiFixError.value = err.message || '生成诊断报告失败'
       console.error('[AiFix]', err)
     } finally {
       isAiFixLoading.value = false
     }
+  }
+
+  function generateDiagnosticReport(): string {
+    const week = currentWeek.value
+    const lives = liveStreams.value
+    const segments = audienceSegments.value
+
+    const realLives = lives.filter((l) => l.type === 'real')
+    const fakeLives = lives.filter((l) => l.type === 'fake')
+
+    const totalInventory = segments.reduce((sum, s) => sum + s.count, 0)
+    const totalAssigned = realLives.reduce((sum, l) => sum + l.exposure, 0)
+    const totalRemaining = segments
+      .filter((s) => s.status === 'available')
+      .reduce((sum, s) => sum + s.count, 0)
+
+    const lineStats = {
+      health: { total: 0, assigned: 0, remaining: 0 },
+      beauty: { total: 0, assigned: 0, remaining: 0 },
+      interest: { total: 0, assigned: 0, remaining: 0 },
+    }
+    for (const seg of segments) {
+      const line = seg.line as keyof typeof lineStats
+      if (lineStats[line]) {
+        lineStats[line].total += seg.count
+        if (seg.status === 'used') lineStats[line].assigned += seg.count
+        else lineStats[line].remaining += seg.count
+      }
+    }
+
+    const underMin = realLives.filter((l) => l.exposure > 0 && l.exposure < 150000)
+    const underPreferred = realLives.filter((l) => l.exposure > 0 && l.exposure < 200000 && l.exposure >= 150000)
+    const zeroExposure = realLives.filter((l) => l.exposure === 0)
+    const fakeUnderMin = fakeLives.filter((l) => l.exposure < 150000)
+
+    const atSegmentLimit = realLives.filter((l) => {
+      const maxSegs = MAX_TOTAL_SEGMENTS[l.grade || 'C'] ?? 5
+      return l.assignedAudiences.length >= maxSegs
+    })
+
+    const lines: string[] = []
+    lines.push(`# 排期诊断报告 - ${week}`)
+    lines.push('')
+    lines.push('## 概览')
+    lines.push(`- 总直播数: ${lives.length}（真直播 ${realLives.length}，伪直播 ${fakeLives.length}）`)
+    lines.push(`- 总库存: ${totalInventory.toLocaleString()}`)
+    lines.push(`- 已分配给真直播: ${totalAssigned.toLocaleString()}`)
+    lines.push(`- 剩余可用: ${totalRemaining.toLocaleString()}`)
+    lines.push('')
+
+    lines.push('## 真直播曝光统计')
+    lines.push('| 直播名 | 品类 | 线 | 等级 | 日期 | 曝光 | 段数 |')
+    lines.push('|---|---|---|---|---|---|---|')
+    for (const l of realLives.sort((a, b) => b.exposure - a.exposure)) {
+      const status = l.exposure === 0 ? '❌ 0曝光' : l.exposure < 150000 ? '⚠️ <15w' : l.exposure < 200000 ? '⚡ <20w' : '✅ 达标'
+      lines.push(
+        `| ${l.name} | ${l.category} | ${l.line} | ${l.grade || '-'} | ${l.date} | ${l.exposure.toLocaleString()} | ${l.assignedAudiences.length} | ${status}`
+      )
+    }
+    lines.push('')
+
+    if (zeroExposure.length > 0) {
+      lines.push('## ❌ 0 曝光直播（严重）')
+      for (const l of zeroExposure) {
+        lines.push(`- ${l.name}（${l.line} ${l.grade || '-'}）${l.date}`)
+      }
+      lines.push('')
+    }
+
+    if (underMin.length > 0) {
+      lines.push('## ⚠️ 低于 15w 底线直播')
+      for (const l of underMin) {
+        lines.push(`- ${l.name}: ${l.exposure.toLocaleString()}（目标 ${l.grade === 'S' ? '60w' : l.grade === 'A' ? '50w' : l.grade === 'B' ? '35w' : '25w'}）`)
+      }
+      lines.push('')
+    }
+
+    if (fakeUnderMin.length > 0) {
+      lines.push('## ⚠️ 伪直播/数字人低于 15w 底线')
+      for (const l of fakeUnderMin) {
+        lines.push(`- ${l.name}: ${l.exposure.toLocaleString()}`)
+      }
+      lines.push('')
+    }
+
+    lines.push('## 剩余库存分析')
+    lines.push(`| 线级 | 总库存 | 已分配 | 剩余 |`)
+    lines.push(`|---|---|---|---|`)
+    for (const line of ['health', 'beauty', 'interest'] as const) {
+      const s = lineStats[line]
+      lines.push(`| ${line} | ${s.total.toLocaleString()} | ${s.assigned.toLocaleString()} | ${s.remaining.toLocaleString()} |`)
+    }
+    lines.push('')
+
+    if (atSegmentLimit.length > 0) {
+      lines.push('## 📛 已达段数上限直播')
+      for (const l of atSegmentLimit) {
+        const maxSegs = MAX_TOTAL_SEGMENTS[l.grade || 'C'] ?? 5
+        lines.push(`- ${l.name}: ${l.assignedAudiences.length}/${maxSegs} 段`)
+      }
+      lines.push('')
+    }
+
+    lines.push('## 分析请求')
+    lines.push('请分析上述排期数据，找出以下问题并给出修复建议：')
+    lines.push('1. 为什么有 0 曝光直播？')
+    lines.push('2. 为什么有真直播低于 15w 底线？')
+    lines.push('3. 为什么 health 线有大量剩余库存？')
+    lines.push('4. 伪直播/数字人如何补足曝光？')
+    lines.push('5. 是否有 audience 段可以转移以优化分配？')
+    lines.push('')
+    lines.push('核心规则：真直播 20w 底线 / 伪直播/数字人 15w 底线 / 同 audience 3天间隔 / 严禁跨线兜底')
+
+    return lines.join('\n')
   }
 
   function clearAiFix() {
