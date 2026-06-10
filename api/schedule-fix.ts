@@ -65,7 +65,7 @@ function getProvider(): ApiProvider {
 function getModel(provider: ApiProvider): string {
   return (
     process.env.LLM_MODEL ||
-    (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'kimi-k2.6')
+    (provider === 'anthropic' ? 'claude-sonnet-4-6' : 'kimi-2.6')
   )
 }
 
@@ -117,7 +117,13 @@ async function callOpenAICompatible(
   model: string,
   compactState: any
 ) {
-  const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`
+  // 自动补全 /v1 路径：若 baseUrl 不含 /v1，则追加
+  let normalized = baseUrl.replace(/\/$/, '')
+  if (!normalized.includes('/v1')) {
+    normalized += '/v1'
+  }
+  const url = `${normalized}/chat/completions`
+  console.log('[Edge] Calling LLM API:', url, 'model:', model)
   const response = await fetch(url, {
     method: 'POST',
     headers: {
