@@ -1699,12 +1699,12 @@ export const useScheduleStore = defineStore('schedule', () => {
     }
 
     const underMin = realLives.filter((l) => l.exposure > 0 && l.exposure < 150000)
-    const underPreferred = realLives.filter((l) => l.exposure > 0 && l.exposure < 200000 && l.exposure >= 150000)
     const zeroExposure = realLives.filter((l) => l.exposure === 0)
     const fakeUnderMin = fakeLives.filter((l) => l.exposure < 150000)
 
+    const maxSegsByGrade: Record<string, number> = { S: 10, A: 8, B: 7, C: 5 }
     const atSegmentLimit = realLives.filter((l) => {
-      const maxSegs = MAX_TOTAL_SEGMENTS[l.grade || 'C'] ?? 5
+      const maxSegs = maxSegsByGrade[l.grade || 'C'] ?? 5
       return l.assignedAudiences.length >= maxSegs
     })
 
@@ -1765,7 +1765,7 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (atSegmentLimit.length > 0) {
       lines.push('## 📛 已达段数上限直播')
       for (const l of atSegmentLimit) {
-        const maxSegs = MAX_TOTAL_SEGMENTS[l.grade || 'C'] ?? 5
+        const maxSegs = maxSegsByGrade[l.grade || 'C'] ?? 5
         lines.push(`- ${l.name}: ${l.assignedAudiences.length}/${maxSegs} 段`)
       }
       lines.push('')

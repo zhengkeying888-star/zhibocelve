@@ -4,14 +4,10 @@ import { useScheduleStore } from '@/stores/schedule'
 
 const store = useScheduleStore()
 
-const suggestions = computed(() => store.aiFixSuggestions?.suggestions || [])
 const rootCause = computed(() => store.aiFixSuggestions?.rootCause || '')
-const confidence = computed(() => store.aiFixSuggestions?.confidence || 0)
-const healthAnalysis = computed(() => store.aiFixSuggestions?.healthLineAnalysis || null)
 const isLoading = computed(() => store.isAiFixLoading)
 const error = computed(() => store.aiFixError)
 const raw = computed(() => store.aiFixSuggestions?.raw || '')
-const isReport = computed(() => store.aiFixSuggestions?.provider === 'local-report')
 
 async function handleAnalyze() {
   await store.fetchAiFixSuggestions()
