@@ -992,12 +992,17 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
     const json = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]
     if (json.length < 2) continue
     const headers = json[0].map((h: any) => normCell(h)).join(' ')
-    if (headers.includes('跨科率') && headers.includes('LTV') && headers.includes('公海')) {
+    if (headers.includes('跨科率') && headers.includes('ltv') && headers.includes('公海')) {
       dataSheetName = name
       break
     }
     // Fallback: look for day60 cross-category data pattern
     if (headers.includes('day60') || headers.includes('跨科线索数')) {
+      dataSheetName = name
+      break
+    }
+    // Fallback: d30 format (d30直播间跨科率 / d30直播间ltv)
+    if ((headers.includes('跨科率') || headers.includes('d30')) && (headers.includes('ltv') || headers.includes('d30'))) {
       dataSheetName = name
       break
     }
@@ -1017,7 +1022,8 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   const toIdx = 2
 
   // Find column indices for live vs guide data
-  const crossRateLiveIdx = headers.findIndex(h => h.includes('跨科率_直播间'))
+  // 支持两种格式：跨科率_直播间 / d30直播间跨科率
+  const crossRateLiveIdx = headers.findIndex(h => h.includes('跨科率_直播间') || h.includes('d30直播间跨科率') || h.includes('d30 直播间跨科率'))
   const crossRateGuideIdx = headers.findIndex(h => h.includes('跨科率_导量'))
   const crossRateGeneralIdx = headers.findIndex(h => h.includes('跨科率'))
 
@@ -1025,9 +1031,10 @@ export function parseCrossPrefSheet(buffer: ArrayBuffer): { crossPrefs: CrossPre
   const convRateGuideIdx = headers.findIndex(h => h.includes('转化率_导量'))
   const convRateGeneralIdx = headers.findIndex(h => h.includes('转化率'))
 
-  const ltvLiveIdx = headers.findIndex(h => h.includes('LTV_直播间'))
+  // 支持两种格式：LTV_直播间 / d30直播间ltv
+  const ltvLiveIdx = headers.findIndex(h => h.includes('LTV_直播间') || h.includes('d30直播间ltv') || h.includes('d30 直播间ltv'))
   const ltvGuideIdx = headers.findIndex(h => h.includes('LTV_导量'))
-  const ltvGeneralIdx = headers.findIndex(h => h.includes('LTV'))
+  const ltvGeneralIdx = headers.findIndex(h => h.includes('LTV') || h.includes('ltv'))
 
   function parseNumeric(val: any): number {
     if (val === '' || val === undefined || val === null) return NaN
